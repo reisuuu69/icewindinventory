@@ -9,18 +9,28 @@
 // Load config
 require_once 'config.php';
 // ====================== JSON DATABASE FUNCTIONS ======================
-function read_json($filename) {
-    if (!file_exists($filename)) {
-        return [];
-    }
-    $json = file_get_contents($filename);
-    $data = json_decode($json, true);
-    return is_array($data) ? $data : [];
+// functions.php — swap JSON helpers for Sheets helpers
+require_once 'sheets.php';
+
+// Headers must match your Google Sheet column names exactly
+$SHEET_HEADERS = [
+    'Inventory'   => ['id','serial_number','category','brand_model','hp',
+                      'discounted_price','regular_price','savings','supplier',
+                      'status','created_at','created_by'],
+    'Consumables' => ['id','item_name','category','unit_of_measure',
+                      'stock_quantity','reorder_level', 'location,','date_added'],
+    'Accessories' => ['id','item_name','category','unit_of_measure', 'stock_quantity','reorder_level','location','condition'],
+];
+
+function read_json($sheetName) {
+    return sheets_read($sheetName);
 }
 
-function write_json($filename, $data) {
-    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-    return file_put_contents($filename, $json) !== false;
+function write_json($sheetName, $data) {
+    global $SHEET_HEADERS;
+    $headers = $SHEET_HEADERS[$sheetName] ?? array_keys($data[0] ?? []);
+    sheets_write($sheetName, $data, $headers);
+    return true;
 }
 
 // ====================== AUTH & HELPER FUNCTIONS ======================

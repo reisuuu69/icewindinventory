@@ -4,9 +4,9 @@
  */
 
 // Google Sheets Configuration
-define('INVENTORY_FILE', 'inventory.json');
-define('CONSUMABLES_FILE', 'consumables.json');
-define('ACCESSORIES_FILE', 'accessories.json');
+define('INVENTORY_FILE',    'Inventory');    // was 'inventory.json'
+define('CONSUMABLES_FILE',  'Consumables');  // was 'consumables.json'
+define('ACCESSORIES_FILE',  'Accessories');  // was 'accessories.json'
 
 // Admin credentials
 define('ADMIN_USERNAME', 'admin');

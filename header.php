@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<?php require_once 'loading_screen.php';?>
 <html lang="en">
 <head>
     <meta charset="UTF-8">

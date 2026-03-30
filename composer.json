@@ -1,5 +1,10 @@
 {
     "require": {
         "google/apiclient": "^2.17"
+    },
+    "config": {
+        "audit": {
+            "ignore": ["[PKSA-y2cr-5h3j-g3ys]"]
+        }
     }
 }

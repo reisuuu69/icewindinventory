@@ -88,7 +88,7 @@ function render_header($title = 'Icewind HVAC') {
                 <i data-lucide="wind" class="me-2"></i>Icewind HVAC
             </a>
             <div class="ms-auto d-flex align-items-center">
-                <span class="text-white me-3 d-none d-md-inline">Welcome, <?php echo htmlspecialchars($_SESSION['user']['username']); ?></span>
+                <span class="text-white me-3 d-none d-md-inline">Welcome, <?php echo htmlspecialchars($_SESSION['user']['username'] ?? 'Admin'); ?></span>
                 <a href="logout.php" class="btn btn-sm btn-outline-light">Logout</a>
             </div>
         </div>

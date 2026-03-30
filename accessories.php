@@ -1,6 +1,7 @@
 <?php
 /**
- * Icewind HVAC Inventory System - Accessories (JSON Version)
+ * Icewind HVAC Inventory System - Accessories
+ * Database: Google Sheets (Accessories tab)
  */
 
 require_once 'config.php';
@@ -8,127 +9,94 @@ require_once 'functions.php';
 
 check_auth();
 
-$error = '';
-$success = '';
-
-// =======================
-// JSON CONFIG
-// =======================
-if (!defined('ACCESSORIES_FILE')) {
-    define('ACCESSORIES_FILE', 'accessories.json');
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// Load JSON
-function loadAccessories() {
-    if (!file_exists(ACCESSORIES_FILE)) return [];
-    $data = json_decode(file_get_contents(ACCESSORIES_FILE), true);
-    return $data ? $data : [];
-}
+$error = $success = '';
 
-// Save JSON
-function saveAccessories($data) {
-    file_put_contents(ACCESSORIES_FILE, json_encode($data, JSON_PRETTY_PRINT), LOCK_EX);
-}
-
-// Generate ID
-function generateId($data) {
-    $ids = array_column($data, 'id');
-    return $ids ? max($ids) + 1 : 1;
-}
-
-// =======================
-// EXPORT CSV
-// =======================
+// ─── Export CSV ──────────────────────────────────────────────────
 if (isset($_GET['export'])) {
-    $data = loadAccessories();
+    $items = read_json(ACCESSORIES_FILE);
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="accessories_export_' . date('Y-m-d') . '.csv"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['ID','Item Name','Category','Stock Quantity','Reorder Level']);
+    foreach ($items as $row)
+        fputcsv($out, [$row['id'],$row['item_name'],$row['category'],$row['stock_quantity'],$row['reorder_level']]);
+    fclose($out); exit;
+}
 
-    $csvData = [];
-    foreach ($data as $item) {
-        $csvData[] = [
-            $item['id'],
-            $item['item_name'],
-            $item['category'],
-            $item['stock_quantity'],
-            $item['reorder_level']
+// ─── Add ─────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add') {
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        $error = 'Invalid CSRF token.';
+    } else {
+        $items = read_json(ACCESSORIES_FILE);
+        $items[] = [
+            'id'             => count($items) > 0 ? max(array_column($items,'id')) + 1 : 1,
+            'item_name'      => trim($_POST['item_name'] ?? ''),
+            'category'       => trim($_POST['category'] ?? ''),
+            'stock_quantity' => intval($_POST['stock_quantity'] ?? 0),
+            'reorder_level'  => intval($_POST['reorder_level'] ?? 0),
         ];
+        write_json(ACCESSORIES_FILE, $items);
+        header("Location: accessories.php?success=added"); exit;
     }
-
-    export_to_csv('accessories_export_' . date('Y-m-d'), $csvData);
 }
 
-// =======================
-// ADD / EDIT
-// =======================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    $data = loadAccessories();
-
-    $id = $_POST['id'] ?? generateId($data);
-
-    $newItem = [
-        'id' => $id,
-        'item_name' => $_POST['item_name'],
-        'category' => $_POST['category'],
-        'stock_quantity' => (int)$_POST['stock_quantity'],
-        'reorder_level' => (int)$_POST['reorder_level']
-    ];
-
-    if ($_POST['action'] === 'add') {
-        $newItem['id'] = generateId($data);
-        $data[] = $newItem;
-        $success = "Accessory added successfully!";
-    }
-
-    elseif ($_POST['action'] === 'edit') {
-        foreach ($data as &$item) {
-            if ($item['id'] == $id) {
-                $item = $newItem;
-                break;
+// ─── Edit ────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit') {
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        $error = 'Invalid CSRF token.';
+    } else {
+        $items = read_json(ACCESSORIES_FILE);
+        $id = intval($_POST['id'] ?? 0); $found = false;
+        foreach ($items as &$item) {
+            if ($item['id'] === $id) {
+                $item['item_name']      = trim($_POST['item_name'] ?? '');
+                $item['category']       = trim($_POST['category'] ?? '');
+                $item['stock_quantity'] = intval($_POST['stock_quantity'] ?? 0);
+                $item['reorder_level']  = intval($_POST['reorder_level'] ?? 0);
+                $found = true; break;
             }
-        }
-        $success = "Accessory updated successfully!";
+        } unset($item);
+        if ($found) { write_json(ACCESSORIES_FILE, $items); header("Location: accessories.php?success=updated"); exit; }
+        else $error = "Accessory not found.";
     }
-
-    saveAccessories($data);
 }
 
-// =======================
-// DELETE
-// =======================
-if (isset($_GET['delete'])) {
-    $id = $_GET['delete'];
-    $data = loadAccessories();
-
-    $data = array_filter($data, function($item) use ($id) {
-        return $item['id'] != $id;
-    });
-
-    saveAccessories(array_values($data));
-    $success = "Accessory deleted successfully!";
+// ─── Delete ──────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        $error = 'Invalid CSRF token.';
+    } else {
+        $id = intval($_POST['delete_id']);
+        $items = array_values(array_filter(read_json(ACCESSORIES_FILE), fn($i) => $i['id'] !== $id));
+        write_json(ACCESSORIES_FILE, $items);
+        header("Location: accessories.php?success=deleted"); exit;
+    }
 }
 
-// =======================
-// FETCH DATA
-// =======================
-$items = loadAccessories();
-
-// =======================
-// SEARCH
-// =======================
-$search = $_GET['search'] ?? '';
+// ─── Fetch & Filter ──────────────────────────────────────────────
+$items  = read_json(ACCESSORIES_FILE);
+$search = trim($_GET['search'] ?? '');
 if ($search) {
-    $items = array_filter($items, function($item) use ($search) {
-        return stripos($item['item_name'], $search) !== false ||
-               stripos($item['category'], $search) !== false;
-    });
+    $items = array_filter($items, fn($i) =>
+        stripos($i['item_name'], $search) !== false || stripos($i['category'], $search) !== false);
 }
+$success = $success ?: ($_GET['success'] ?? '');
+$error   = $error   ?: ($_GET['error'] ?? '');
 
+require_once 'loading_screen.php';
 render_header('Accessories');
 ?>
 
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
     <h1 class="h2 fw-bold">Accessories Stock</h1>
     <div class="btn-toolbar mb-2 mb-md-0">
-        <button type="button" class="btn btn-sm btn-primary me-2" data-bs-toggle="modal" data-bs-target="#itemModal" onclick="resetForm()">
+        <button type="button" class="btn btn-sm btn-primary me-2"
+                data-bs-toggle="modal" data-bs-target="#itemModal" onclick="resetForm()">
             <i data-lucide="plus" class="me-1"></i>Add New Item
         </button>
         <a href="?export=1" class="btn btn-sm btn-outline-secondary">
@@ -137,121 +105,134 @@ render_header('Accessories');
     </div>
 </div>
 
-<?php if ($success): ?>
-<div class="alert alert-success alert-dismissible fade show">
-    <?php echo $success; ?>
-</div>
+<?php if ($success === 'added'): ?><div class="alert alert-success alert-dismissible fade show">Accessory added successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+<?php elseif ($success === 'updated'): ?><div class="alert alert-success alert-dismissible fade show">Accessory updated successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+<?php elseif ($success === 'deleted'): ?><div class="alert alert-success alert-dismissible fade show">Accessory deleted successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
 <?php endif; ?>
+<?php if ($error): ?><div class="alert alert-danger alert-dismissible fade show"><?= htmlspecialchars($error) ?> <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div><?php endif; ?>
 
-<?php if ($error): ?>
-<div class="alert alert-danger alert-dismissible fade show">
-    <?php echo $error; ?>
-</div>
-<?php endif; ?>
-
-<!-- SEARCH -->
 <div class="card shadow-sm border-0 mb-4">
     <div class="card-body">
         <form class="row g-3" method="GET">
             <div class="col-md-10">
-                <input type="text" class="form-control" name="search" placeholder="Search..." value="<?php echo htmlspecialchars($search); ?>">
+                <div class="input-group">
+                    <span class="input-group-text bg-white border-end-0"><i data-lucide="search" style="width:18px;"></i></span>
+                    <input type="text" class="form-control border-start-0" name="search"
+                           placeholder="Search Item Name or Category..." value="<?= htmlspecialchars($search) ?>">
+                </div>
             </div>
-            <div class="col-md-2">
-                <button class="btn btn-outline-primary w-100">Search</button>
-            </div>
+            <div class="col-md-2"><button type="submit" class="btn btn-outline-primary w-100">Search</button></div>
         </form>
     </div>
 </div>
 
-<!-- TABLE -->
 <div class="card shadow-sm border-0">
     <div class="card-body p-0">
-        <table class="table table-hover mb-0">
-            <thead class="bg-light">
-                <tr>
-                    <th class="px-4 py-3">Item Name</th>
-                    <th>Category</th>
-                    <th>Stock</th>
-                    <th>Reorder</th>
-                    <th>Status</th>
-                    <th class="text-end px-4">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php if (empty($items)): ?>
-                <tr><td colspan="6" class="text-center py-5">No data</td></tr>
-            <?php else: ?>
-                <?php foreach ($items as $item): 
-                    $stock = $item['stock_quantity'];
-                    $reorder = $item['reorder_level'];
-                    $isLow = $stock <= $reorder;
-                ?>
-                <tr>
-                    <td class="px-4 fw-bold"><?php echo $item['item_name']; ?></td>
-                    <td><?php echo $item['category']; ?></td>
-                    <td class="<?php echo $isLow ? 'text-danger' : 'text-success'; ?>">
-                        <?php echo $stock; ?>
-                    </td>
-                    <td><?php echo $reorder; ?></td>
-                    <td>
-                        <?php echo $isLow 
-                            ? '<span class="badge bg-danger">Low</span>' 
-                            : '<span class="badge bg-success">OK</span>'; ?>
-                    </td>
-                    <td class="text-end px-4">
-                        <button class="btn btn-sm btn-primary" onclick='editItem(<?php echo json_encode($item); ?>)'>Edit</button>
-                        <a href="?delete=<?php echo $item['id']; ?>" class="btn btn-sm btn-danger">Delete</a>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="px-4 py-3">Item Name</th>
+                        <th>Category</th><th>Stock Qty</th>
+                        <th>Reorder</th><th>Status</th>
+                        <th class="text-end px-4">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if (empty($items)): ?>
+                    <tr><td colspan="6" class="text-center py-5 text-muted">No accessories found.</td></tr>
+                <?php else: foreach ($items as $item):
+                    $stock = intval($item['stock_quantity'] ?? 0);
+                    $reorder = intval($item['reorder_level'] ?? 0);
+                    $isLow = $stock <= $reorder; ?>
+                    <tr>
+                        <td class="px-4 fw-bold"><?= htmlspecialchars($item['item_name'] ?? '') ?></td>
+                        <td><?= htmlspecialchars($item['category'] ?? '') ?></td>
+                        <td><span class="fw-bold <?= $isLow ? 'text-danger' : 'text-success' ?>"><?= $stock ?></span></td>
+                        <td><?= $reorder ?></td>
+                        <td><?= $isLow ? '<span class="badge bg-danger">Low</span>' : '<span class="badge bg-success">OK</span>' ?></td>
+                        <td class="text-end px-4">
+                            <button class="btn btn-sm btn-outline-primary me-1"
+                                    onclick='editItem(<?= json_encode($item) ?>)'>
+                                <i data-lucide="edit-2" style="width:14px;"></i>
+                            </button>
+                            <form method="POST" style="display:inline;">
+                                <input type="hidden" name="delete_id"  value="<?= intval($item['id']) ?>">
+                                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+                                <button type="submit" class="btn btn-sm btn-outline-danger"
+                                        onclick="return confirm('Delete this accessory?')">
+                                    <i data-lucide="trash-2" style="width:14px;"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
-<!-- MODAL -->
-<div class="modal fade" id="itemModal">
-<div class="modal-dialog">
-<div class="modal-content">
-<form method="POST">
-<input type="hidden" name="action" id="formAction">
-<input type="hidden" name="id" id="itemId">
-
-<div class="modal-body">
-<input class="form-control mb-2" name="item_name" id="item_name" placeholder="Item Name" required>
-<input class="form-control mb-2" name="category" id="category" placeholder="Category" required>
-<input class="form-control mb-2" type="number" name="stock_quantity" id="stock_quantity" placeholder="Stock">
-<input class="form-control mb-2" type="number" name="reorder_level" id="reorder_level" placeholder="Reorder">
-</div>
-
-<div class="modal-footer">
-<button class="btn btn-primary">Save</button>
-</div>
-
-</form>
-</div>
-</div>
+<!-- Modal -->
+<div class="modal fade" id="itemModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title fw-bold" id="modalTitle">Add New Accessory</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST">
+                <input type="hidden" name="action"     id="formAction" value="add">
+                <input type="hidden" name="id"         id="itemId">
+                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+                <div class="modal-body p-4">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Item Name</label>
+                        <input type="text" class="form-control" name="item_name" id="item_name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Category</label>
+                        <input type="text" class="form-control" name="category" id="category"
+                               placeholder="e.g. Filter, Bracket, Remote" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label fw-semibold">Stock Quantity</label>
+                            <input type="number" class="form-control" name="stock_quantity" id="stock_quantity" min="0" required>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label fw-semibold">Reorder Level</label>
+                            <input type="number" class="form-control" name="reorder_level" id="reorder_level" min="0" required>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary px-4">Save Item</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 
 <script>
-function resetForm(){
-    formAction.value='add';
-    itemId.value='';
-    item_name.value='';
-    category.value='';
-    stock_quantity.value='';
-    reorder_level.value='';
+function resetForm() {
+    document.getElementById('modalTitle').innerText = 'Add New Accessory';
+    document.getElementById('formAction').value     = 'add';
+    document.getElementById('itemId').value         = '';
+    document.getElementById('item_name').value      = '';
+    document.getElementById('category').value       = '';
+    document.getElementById('stock_quantity').value = '';
+    document.getElementById('reorder_level').value  = '';
 }
-
-function editItem(item){
-    formAction.value='edit';
-    itemId.value=item.id;
-    item_name.value=item.item_name;
-    category.value=item.category;
-    stock_quantity.value=item.stock_quantity;
-    reorder_level.value=item.reorder_level;
-
+function editItem(item) {
+    document.getElementById('modalTitle').innerText = 'Edit Accessory';
+    document.getElementById('formAction').value     = 'edit';
+    document.getElementById('itemId').value         = item.id;
+    document.getElementById('item_name').value      = item.item_name;
+    document.getElementById('category').value       = item.category;
+    document.getElementById('stock_quantity').value = item.stock_quantity;
+    document.getElementById('reorder_level').value  = item.reorder_level;
     new bootstrap.Modal(document.getElementById('itemModal')).show();
 }
 </script>

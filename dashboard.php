@@ -5,6 +5,7 @@ session_start();
 require_once 'config.php';
 require_once 'functions.php';
 
+
 check_auth();
 
 $inventory   = read_json(INVENTORY_FILE);
@@ -43,17 +44,11 @@ foreach ($accessories as $item) {
     }
 }
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dashboard — Icewind HVAC</title>
-
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<?php
+require_once 'loading_screen.php';
+render_header('Dashboard');
+?>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-
 <style>
 /* ─── Reset & base ─────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -411,10 +406,7 @@ body {
     .data-table tbody tr:last-child { border-bottom: none; }
 }
 </style>
-</head>
-<body>
 
-<?php render_header('Dashboard'); ?>
 
 <div class="page">
 
@@ -541,5 +533,3 @@ document.getElementById('js-date').textContent =
 </script>
 
 <?php render_footer(); ?>
-</body>
-</html>

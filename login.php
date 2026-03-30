@@ -5,6 +5,7 @@ session_start();
 require_once 'config.php';
 require_once 'functions.php';
 
+
 // Redirect to dashboard if already logged in
 if (isset($_SESSION['user'])) {
     header("Location: dashboard.php");
@@ -43,6 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </style>
 </head>
 <body>
+<?php require_once 'loading_screen.php'; ?>
 <div class="container">
     <div class="login-card card shadow">
         <div class="card-body p-5">
@@ -67,9 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <button type="submit" class="btn btn-primary w-100 py-2">Login to Dashboard</button>
             </form>
 
-            <div class="text-center mt-3">
-                <small><a href="forgot.php">Forgot Password?</a></small>
-            </div>
+        
         </div>
         <div class="card-footer text-center text-muted py-3">
             © 2026 Icewind HVAC Corporation

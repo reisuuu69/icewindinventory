@@ -5,6 +5,7 @@ session_start();
 require_once 'config.php';
 require_once 'functions.php';
 
+
 // Redirect to dashboard if already logged in
 if (isset($_SESSION['user'])) {
     header("Location: dashboard.php");
@@ -27,13 +28,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $error = "Incorrect username or password!";
     }
+   
 }
+ require_once 'loading_screen.php';
+
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.9.6/lottie.min.js"></script>
+
 <style>
     #animationContainer {
         width: 250px;
@@ -216,7 +221,7 @@ a {
             <div class="card-body p-5">
 
                 <div class="text-center mb-4">
-                    <img src="assets/logo4.gif" alt="Icewind HVAC Logo" class="logo mb-3">
+                    <img src="logo.gif" alt="Icewind HVAC Logo" class="logo mb-3">
                 </div>
 
                 <?php if (!empty($error)): ?>

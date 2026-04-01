@@ -235,6 +235,13 @@ function render_header($title = 'Icewind HVAC') {
                                 Transaction History
                             </a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $current === 'unit_history.php' ? 'active' : ''; ?>"
+                                href="unit_history.php">
+                            <i data-lucide="clock" class="me-2" style="width:16px;height:16px;"></i>
+                                 Unit History
+                                    </a>
+                            </li>
 
                         <!-- Analytics section -->
                         <li><div class="nav-section-label">Analytics</div></li>

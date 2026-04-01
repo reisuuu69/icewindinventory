@@ -1,25 +1,20 @@
 <?php
 /**
- * Icewind HVAC Inventory System 
+ * Icewind HVAC Inventory System
  */
 
-// REMOVE or COMMENT this line:
-// session_start();
-
-// Load config
 require_once 'config.php';
-// ====================== JSON DATABASE FUNCTIONS ======================
-// functions.php — swap JSON helpers for Sheets helpers
 require_once 'sheets.php';
 
-// Headers must match your Google Sheet column names exactly
+// Headers must match EXACTLY the column names in your Google Sheet tabs
 $SHEET_HEADERS = [
-    'Inventory'   => ['id','serial_number','category','brand_model','hp',
-                      'discounted_price','regular_price','savings','supplier',
-                      'status','created_at','created_by'],
+    'Inventory'   => ['id','aircon_type','brand_model','hp','model_number',
+                      'supplier','status','franchise_price','subdealer_price',
+                      'cash_price','card_price','created_at'],
     'Consumables' => ['id','item_name','category','unit_of_measure',
-                      'stock_quantity','reorder_level', 'location,','date_added'],
-    'Accessories' => ['id','item_name','category','unit_of_measure', 'stock_quantity','reorder_level','location','condition'],
+                      'stock_quantity','reorder_level'],
+    'Accessories' => ['id','item_name','category',
+                      'stock_quantity','reorder_level'],
 ];
 
 function read_json($sheetName) {
@@ -45,7 +40,6 @@ function is_logged_in() {
     return isset($_SESSION['user']);
 }
 
-// Simple ID generator
 function generate_id($data) {
     if (empty($data)) return 1;
     $max_id = 0;
@@ -57,7 +51,7 @@ function generate_id($data) {
     return $max_id + 1;
 }
 
-// ====================== RENDER FUNCTIONS (meron ka na ito) ======================
+// ====================== RENDER FUNCTIONS ======================
 function render_header($title = 'Icewind HVAC') {
     ?>
     <!DOCTYPE html>
@@ -134,4 +128,3 @@ function export_to_csv($filename, $data) {
     fclose($output);
     exit();
 }
-?>

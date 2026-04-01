@@ -43,6 +43,9 @@ foreach ($accessories as $item) {
         ];
     }
 }
+
+// Fetch recent transactions
+$recent_transactions = get_transactions(null, null, 10);
 ?>
 <?php
 require_once 'loading_screen.php';
@@ -515,7 +518,52 @@ body {
 
     <hr class="divider">
 
-    <!-- Quick nav -->
+    <!-- Recent transactions section -->
+    <div class="section-head">
+        <h2>Recent transactions</h2>
+        <span class="badge-count"><?= count($recent_transactions) ?> transaction<?= count($recent_transactions) !== 1 ? 's' : '' ?></span>
+    </div>
+
+    <div class="alert-panel">
+        <?php if (empty($recent_transactions)): ?>
+            <div class="empty-state">
+                <div class="empty-icon">
+                    <i data-lucide="history"></i>
+                </div>
+                <h3>No transactions yet</h3>
+                <p>Releases and returns will appear here.</p>
+            </div>
+        <?php else: ?>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Type</th>
+                        <th>Item</th>
+                        <th>Qty</th>
+                        <th>User</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($recent_transactions as $txn): ?>
+                    <tr>
+                        <td><?= htmlspecialchars(date('M d, g:i A', strtotime($txn['recorded_at'] ?? ''))) ?></td>
+                        <td>
+                            <span class="tag <?= ($txn['type'] ?? '') === 'release' ? 'tag--cons' : 'tag--acc' ?>">
+                                <?= ucfirst($txn['type'] ?? '') ?>
+                            </span>
+                        </td>
+                        <td><span class="item-name"><?= htmlspecialchars($txn['item_name'] ?? '—') ?></span></td>
+                        <td><strong><?= htmlspecialchars($txn['quantity'] ?? '0') ?></strong></td>
+                        <td><?= htmlspecialchars($txn['recorded_by'] ?? 'Unknown') ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+    </div>
+
+    <hr class="divider">
     <div class="nav-strip">
         <a href="inventory.php"   class="nav-link-item"><i data-lucide="box"></i>     Inventory</a>
         <a href="consumables.php" class="nav-link-item"><i data-lucide="package"></i> Consumables</a>

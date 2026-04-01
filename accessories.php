@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit'
         $items = read_json(ACCESSORIES_FILE);
         $id = intval($_POST['id'] ?? 0); $found = false;
         foreach ($items as &$item) {
-            if ($item['id'] === $id) {
+            if ((int)$item['id'] === $id) {
                 $item['item_name']      = trim($_POST['item_name'] ?? '');
                 $item['category']       = trim($_POST['category'] ?? '');
                 $item['stock_quantity'] = intval($_POST['stock_quantity'] ?? 0);
@@ -72,13 +72,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
         $error = 'Invalid CSRF token.';
     } else {
         $id = intval($_POST['delete_id']);
-        $items = array_values(array_filter(read_json(ACCESSORIES_FILE), fn($i) => $i['id'] !== $id));
+        $items = array_values(array_filter(read_json(ACCESSORIES_FILE), fn($i) => (int)$i['id'] !== $id));
         write_json(ACCESSORIES_FILE, $items);
         header("Location: accessories.php?success=deleted"); exit;
     }
 }
 
+// ─── Release/Return Transaction ──────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'transaction') {
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        $error = 'Invalid CSRF token.';
+    } else {
+        $txn_type  = trim($_POST['txn_type'] ?? '');
+        $item_id   = trim($_POST['item_id'] ?? '');
+        $quantity  = intval($_POST['txn_quantity'] ?? 0);
+        $notes     = trim($_POST['txn_notes'] ?? '');
+        $item_name = trim($_POST['item_name_hidden'] ?? '');
+
+        $result = do_transaction($txn_type, 'accessory', $item_id, $item_name, $quantity, $notes);
+
+        if ($result['success']) {
+            header("Location: accessories.php?success=transaction"); exit;
+        } else {
+            $error = $result['error'];
+        }
+    }
+}
+
 // ─── Fetch & Filter ──────────────────────────────────────────────
+cache_invalidate(ACCESSORIES_FILE); // force fresh IDs on every page load
 $items  = read_json(ACCESSORIES_FILE);
 $search = trim($_GET['search'] ?? '');
 if ($search) {
@@ -108,6 +130,7 @@ render_header('Accessories');
 <?php if ($success === 'added'): ?><div class="alert alert-success alert-dismissible fade show">Accessory added successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
 <?php elseif ($success === 'updated'): ?><div class="alert alert-success alert-dismissible fade show">Accessory updated successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
 <?php elseif ($success === 'deleted'): ?><div class="alert alert-success alert-dismissible fade show">Accessory deleted successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+<?php elseif ($success === 'transaction'): ?><div class="alert alert-success alert-dismissible fade show">Transaction recorded successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
 <?php endif; ?>
 <?php if ($error): ?><div class="alert alert-danger alert-dismissible fade show"><?= htmlspecialchars($error) ?> <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div><?php endif; ?>
 
@@ -152,12 +175,26 @@ render_header('Accessories');
                         <td><?= $reorder ?></td>
                         <td><?= $isLow ? '<span class="badge bg-danger">Low</span>' : '<span class="badge bg-success">OK</span>' ?></td>
                         <td class="text-end px-4">
-                            <button class="btn btn-sm btn-outline-primary me-1"
+                            <button type="button" class="btn btn-sm btn-outline-success me-1"
+                                    data-bs-toggle="modal" data-bs-target="#transactionModal"
+                                    data-item-id="<?= htmlspecialchars((string)($item['id'] ?? ''), ENT_QUOTES) ?>"
+                                    data-item-name="<?= htmlspecialchars((string)($item['item_name'] ?? ''), ENT_QUOTES) ?>"
+                                    data-txn-type="release">
+                                <i data-lucide="arrow-up" style="width:14px;"></i> Release
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-info me-1"
+                                    data-bs-toggle="modal" data-bs-target="#transactionModal"
+                                    data-item-id="<?= htmlspecialchars((string)($item['id'] ?? ''), ENT_QUOTES) ?>"
+                                    data-item-name="<?= htmlspecialchars((string)($item['item_name'] ?? ''), ENT_QUOTES) ?>"
+                                    data-txn-type="return">
+                                <i data-lucide="arrow-down" style="width:14px;"></i> Return
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary me-1"
                                     onclick='editItem(<?= json_encode($item) ?>)'>
                                 <i data-lucide="edit-2" style="width:14px;"></i>
                             </button>
                             <form method="POST" style="display:inline;">
-                                <input type="hidden" name="delete_id"  value="<?= intval($item['id']) ?>">
+                                <input type="hidden" name="delete_id"  value="<?= htmlspecialchars($item['id'] ?? '') ?>">
                                 <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
                                 <button type="submit" class="btn btn-sm btn-outline-danger"
                                         onclick="return confirm('Delete this accessory?')">
@@ -173,7 +210,7 @@ render_header('Accessories');
     </div>
 </div>
 
-<!-- Modal -->
+<!-- Add/Edit Modal -->
 <div class="modal fade" id="itemModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content border-0 shadow">
@@ -215,6 +252,41 @@ render_header('Accessories');
     </div>
 </div>
 
+<!-- Transaction Modal -->
+<div class="modal fade" id="transactionModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title fw-bold" id="transactionTitle">Release Accessory</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST">
+                <input type="hidden" name="action"           value="transaction">
+                <input type="hidden" name="item_id"          id="txn_item_id">
+                <input type="hidden" name="item_name_hidden" id="txn_item_name_hidden">
+                <input type="hidden" name="txn_type"         id="txn_type" value="release">
+                <input type="hidden" name="csrf_token"       value="<?= $_SESSION['csrf_token'] ?>">
+                <div class="modal-body p-4">
+                    <p class="fw-semibold mb-3">Item: <span id="txn_item_name"></span></p>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Quantity</label>
+                        <input type="number" class="form-control" name="txn_quantity" id="txn_quantity" min="1" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Notes (Optional)</label>
+                        <textarea class="form-control" name="txn_notes" id="txn_notes" rows="2"
+                                  placeholder="e.g. Job #123, Technician Name"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-info px-4" id="txn_submit_btn">Record Release</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
 function resetForm() {
     document.getElementById('modalTitle').innerText = 'Add New Accessory';
@@ -235,6 +307,37 @@ function editItem(item) {
     document.getElementById('reorder_level').value  = item.reorder_level;
     new bootstrap.Modal(document.getElementById('itemModal')).show();
 }
+function openTransactionForm(itemId, itemName, txnType) {
+    document.getElementById('txn_item_id').value          = itemId;
+    document.getElementById('txn_item_name_hidden').value = itemName;
+    document.getElementById('txn_item_name').textContent  = itemName;
+    document.getElementById('txn_type').value             = txnType;
+    document.getElementById('txn_quantity').value         = '';
+    document.getElementById('txn_notes').value            = '';
+
+    if (txnType === 'release') {
+        document.getElementById('transactionTitle').innerText  = 'Release Accessory';
+        document.getElementById('txn_submit_btn').innerText    = 'Record Release';
+        document.getElementById('txn_submit_btn').className    = 'btn btn-success px-4';
+    } else {
+        document.getElementById('transactionTitle').innerText  = 'Return Accessory';
+        document.getElementById('txn_submit_btn').innerText    = 'Record Return';
+        document.getElementById('txn_submit_btn').className    = 'btn btn-info px-4';
+    }
+}
+
+document.getElementById('transactionModal').addEventListener('show.bs.modal', function (event) {
+    const trigger = event.relatedTarget;
+    if (!trigger) {
+        return;
+    }
+
+    openTransactionForm(
+        trigger.getAttribute('data-item-id') || '',
+        trigger.getAttribute('data-item-name') || '',
+        trigger.getAttribute('data-txn-type') || 'release'
+    );
+});
 </script>
 
 <?php render_footer(); ?>

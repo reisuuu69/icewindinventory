@@ -15,6 +15,11 @@ $SHEET_HEADERS = [
                       'stock_quantity','reorder_level'],
     'Accessories' => ['id','item_name','category',
                       'stock_quantity','reorder_level'],
+    'Defectives'  => ['id','inventory_id','brand_model','aircon_type','hp',
+                      'model_number','reason','resolution',
+                      'reported_by','reported_at','notes'],
+    'Transactions'=> ['id','type','item_type','item_id','item_name',
+                      'quantity','recorded_by','recorded_at','notes'],
 ];
 
 function read_json($sheetName) {
@@ -51,26 +56,112 @@ function generate_id($data) {
     return $max_id + 1;
 }
 
+// ====================== DEFECTIVE UNITS ======================
+
+/**
+ * Return all defective unit records from Google Sheets.
+ */
+function get_defectives() {
+    return sheets_read('Defectives');
+}
+
+/**
+ * Write the full defectives array back to the sheet.
+ */
+function write_defectives($rows) {
+    global $SHEET_HEADERS;
+    $headers = $SHEET_HEADERS['Defectives'];
+    sheets_write('Defectives', $rows, $headers);
+}
+
+/**
+ * Append a new defective record.
+ * $data keys: inventory_id, brand_model, aircon_type, hp,
+ *             model_number, reason, resolution, notes
+ */
+function record_defective($data) {
+    $existing = get_defectives();
+
+    $max_id = 0;
+    foreach ($existing as $r) {
+        if ((int)($r['id'] ?? 0) > $max_id) $max_id = (int)$r['id'];
+    }
+
+    $row = [
+        'id'           => $max_id + 1,
+        'inventory_id' => $data['inventory_id'] ?? '',
+        'brand_model'  => $data['brand_model']  ?? '',
+        'aircon_type'  => $data['aircon_type']  ?? '',
+        'hp'           => $data['hp']           ?? '',
+        'model_number' => $data['model_number'] ?? '',
+        'reason'       => $data['reason']       ?? '',
+        'resolution'   => $data['resolution']   ?? 'Pending',
+        'reported_by'  => $_SESSION['user']['username'] ?? 'system',
+        'reported_at'  => date('Y-m-d H:i:s'),
+        'notes'        => $data['notes']        ?? '',
+    ];
+
+    $existing[] = $row;
+    write_defectives($existing);
+    return $row;
+}
+
 // ====================== RENDER FUNCTIONS ======================
 function render_header($title = 'Icewind HVAC') {
+    $current = basename($_SERVER['PHP_SELF']);
     ?>
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title><?php echo $title; ?> - Icewind HVAC</title>
+        <title><?php echo htmlspecialchars($title); ?> - Icewind HVAC</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <script src="https://unpkg.com/lucide@latest"></script>
         <style>
-            :root { --hvac-blue: #0056b3; --hvac-light-blue: #e7f1ff; }
+            :root {
+                --hvac-blue:       #0056b3;
+                --hvac-blue-dark:  #003f88;
+                --hvac-light-blue: #e7f1ff;
+            }
             body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
             .navbar { background-color: var(--hvac-blue); }
-            .sidebar { min-height: calc(100vh - 56px); background-color: white; border-right: 1px solid #dee2e6; }
-            .sidebar .nav-link { color: #333; padding: 1rem; border-bottom: 1px solid #f1f1f1; transition: all 0.2s; }
-            .sidebar .nav-link:hover, .sidebar .nav-link.active { background-color: var(--hvac-light-blue); color: var(--hvac-blue); }
+
+            /* ── Sidebar ── */
+            .sidebar {
+                min-height: calc(100vh - 56px);
+                background-color: #ffffff;
+                border-right: 1px solid #dee2e6;
+            }
+            .sidebar .nav-link {
+                color: #333;
+                padding: 0.65rem 1rem;
+                border-radius: 8px;
+                margin: 2px 8px;
+                display: flex;
+                align-items: center;
+                font-size: 0.875rem;
+                font-weight: 500;
+                transition: all 0.2s;
+            }
+            .sidebar .nav-link:hover { background-color: var(--hvac-light-blue); color: var(--hvac-blue); }
+            .sidebar .nav-link.active {
+                background: linear-gradient(90deg, var(--hvac-blue), var(--hvac-blue-dark));
+                color: #fff;
+            }
+            .sidebar .nav-section-label {
+                font-size: 0.68rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: #94a3b8;
+                padding: 0.75rem 1rem 0.25rem;
+            }
+
+            /* ── Misc ── */
             .card-stat { border-left: 4px solid var(--hvac-blue); }
             .btn-primary { background-color: var(--hvac-blue); border-color: var(--hvac-blue); }
+            .btn-primary:hover { background-color: var(--hvac-blue-dark); border-color: var(--hvac-blue-dark); }
             .table-hover tbody tr:hover { background-color: #f1f8ff; }
         </style>
     </head>
@@ -82,7 +173,9 @@ function render_header($title = 'Icewind HVAC') {
                 <i data-lucide="wind" class="me-2"></i>Icewind HVAC
             </a>
             <div class="ms-auto d-flex align-items-center">
-                <span class="text-white me-3 d-none d-md-inline">Welcome, <?php echo htmlspecialchars($_SESSION['user']['username'] ?? 'Admin'); ?></span>
+                <span class="text-white me-3 d-none d-md-inline">
+                    Welcome, <?php echo htmlspecialchars($_SESSION['user']['username'] ?? 'Admin'); ?>
+                </span>
                 <a href="logout.php" class="btn btn-sm btn-outline-light">Logout</a>
             </div>
         </div>
@@ -90,12 +183,69 @@ function render_header($title = 'Icewind HVAC') {
     <div class="container-fluid">
         <div class="row">
             <nav class="col-md-3 col-lg-2 d-md-block sidebar collapse shadow-sm">
-                <div class="position-sticky pt-3">
+                <div class="position-sticky pt-2">
                     <ul class="nav flex-column">
-                        <li class="nav-item"><a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'dashboard.php' ? 'active' : ''; ?>" href="dashboard.php"><i data-lucide="layout-dashboard" class="me-2"></i>Dashboard</a></li>
-                        <li class="nav-item"><a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'inventory.php' ? 'active' : ''; ?>" href="inventory.php"><i data-lucide="package" class="me-2"></i>Inventory</a></li>
-                        <li class="nav-item"><a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'consumables.php' ? 'active' : ''; ?>" href="consumables.php"><i data-lucide="droplet" class="me-2"></i>Consumables</a></li>
-                        <li class="nav-item"><a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'accessories.php' ? 'active' : ''; ?>" href="accessories.php"><i data-lucide="settings" class="me-2"></i>Accessories</a></li>
+
+                        <!-- Dashboard -->
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $current === 'dashboard.php' ? 'active' : ''; ?>"
+                               href="dashboard.php">
+                                <i data-lucide="layout-dashboard" class="me-2" style="width:16px;height:16px;"></i>
+                                Dashboard
+                            </a>
+                        </li>
+
+                        <!-- Inventory section -->
+                        <li><div class="nav-section-label">Inventory</div></li>
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $current === 'inventory.php' ? 'active' : ''; ?>"
+                               href="inventory.php">
+                                <i data-lucide="package" class="me-2" style="width:16px;height:16px;"></i>
+                                Inventory
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $current === 'defective.php' ? 'active' : ''; ?>"
+                               href="defective.php">
+                                <i data-lucide="alert-triangle" class="me-2" style="width:16px;height:16px;"></i>
+                                Defective Units
+                            </a>
+                        </li>
+
+                        <!-- Stock section -->
+                        <li><div class="nav-section-label">Stock</div></li>
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $current === 'consumables.php' ? 'active' : ''; ?>"
+                               href="consumables.php">
+                                <i data-lucide="droplet" class="me-2" style="width:16px;height:16px;"></i>
+                                Consumables
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $current === 'accessories.php' ? 'active' : ''; ?>"
+                               href="accessories.php">
+                                <i data-lucide="settings" class="me-2" style="width:16px;height:16px;"></i>
+                                Accessories
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $current === 'history.php' ? 'active' : ''; ?>"
+                               href="history.php">
+                                <i data-lucide="history" class="me-2" style="width:16px;height:16px;"></i>
+                                Transaction History
+                            </a>
+                        </li>
+
+                        <!-- Analytics section -->
+                        <li><div class="nav-section-label">Analytics</div></li>
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $current === 'reports.php' ? 'active' : ''; ?>"
+                               href="reports.php">
+                                <i data-lucide="bar-chart-2" class="me-2" style="width:16px;height:16px;"></i>
+                                Reports
+                            </a>
+                        </li>
+
                     </ul>
                 </div>
             </nav>

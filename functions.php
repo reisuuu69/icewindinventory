@@ -20,6 +20,9 @@ $SHEET_HEADERS = [
                       'reported_by','reported_at','notes'],
     'Transactions'=> ['id','type','item_type','item_id','item_name',
                       'quantity','recorded_by','recorded_at','notes'],
+    'UnitHistory' => ['id','inventory_id','brand_model','aircon_type',
+                      'event_type','field','old_value','new_value',
+                      'changed_by','changed_at','notes'],
 ];
 
 function read_json($sheetName) {
@@ -54,6 +57,42 @@ function generate_id($data) {
         }
     }
     return $max_id + 1;
+}
+
+// ====================== UNIT HISTORY ======================
+
+/**
+ * Record a unit history event to the UnitHistory sheet.
+ * event_type: added | status_change | price_edit | deleted | note
+ */
+function record_unit_history($inventory_id, $brand_model, $aircon_type, $event_type, $field, $old_value, $new_value, $notes = '') {
+    global $SHEET_HEADERS;
+
+    $existing = sheets_read('UnitHistory');
+
+    $max_id = 0;
+    foreach ($existing as $r) {
+        if ((int)($r['id'] ?? 0) > $max_id) $max_id = (int)$r['id'];
+    }
+
+    $row = [
+        'id'           => $max_id + 1,
+        'inventory_id' => $inventory_id,
+        'brand_model'  => $brand_model,
+        'aircon_type'  => $aircon_type,
+        'event_type'   => $event_type,
+        'field'        => $field,
+        'old_value'    => $old_value,
+        'new_value'    => $new_value,
+        'changed_by'   => $_SESSION['user']['username'] ?? 'system',
+        'changed_at'   => date('Y-m-d H:i:s'),
+        'notes'        => $notes,
+    ];
+
+    $existing[] = $row;
+    sheets_write('UnitHistory', $existing, $SHEET_HEADERS['UnitHistory']);
+
+    return $row;
 }
 
 // ====================== DEFECTIVE UNITS ======================
@@ -240,8 +279,8 @@ function render_header($title = 'Icewind HVAC') {
                                 href="unit_history.php">
                             <i data-lucide="clock" class="me-2" style="width:16px;height:16px;"></i>
                                  Unit History
-                                    </a>
-                            </li>
+                            </a>
+                        </li>
 
                         <!-- Analytics section -->
                         <li><div class="nav-section-label">Analytics</div></li>

@@ -86,7 +86,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add')
     $all_items[] = $new_item;
     write_json(INVENTORY_FILE, $all_items);
 
+    // Log to unit history
+    record_unit_history(
+        $new_item['id'],
+        $brand_model,
+        $aircon_type,
+        'added',
+        'status',
+        '',
+        $status,
+        'Unit added to inventory'
+    );
+
     header("Location: inventory.php?success=added");
+    exit;
+}
+
+// =========================
+// UPDATE STATUS
+// =========================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_status') {
+
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        header("Location: inventory.php?error=" . urlencode('Invalid CSRF token'));
+        exit;
+    }
+
+    $inv_id     = intval($_POST['inventory_id'] ?? 0);
+    $new_status = trim($_POST['new_status'] ?? '');
+    $note_text  = trim($_POST['status_note'] ?? '');
+    $allowed    = ['Available', 'Installed', 'Reserved', 'Defective'];
+
+    if (!$inv_id || !in_array($new_status, $allowed)) {
+        header("Location: inventory.php?error=" . urlencode('Invalid unit or status.'));
+        exit;
+    }
+
+    $inv        = read_json(INVENTORY_FILE);
+    $old_status = '';
+    $unit       = null;
+
+    foreach ($inv as &$i) {
+        if ((int)$i['id'] === $inv_id) {
+            $old_status = $i['status'] ?? '';
+            $unit       = $i;
+            $i['status'] = $new_status;
+            break;
+        }
+    } unset($i);
+
+    if (!$unit) {
+        header("Location: inventory.php?error=" . urlencode('Unit not found.'));
+        exit;
+    }
+
+    if ($old_status === $new_status) {
+        header("Location: inventory.php?error=" . urlencode('Status is already set to ' . $new_status . '.'));
+        exit;
+    }
+
+    write_json(INVENTORY_FILE, $inv);
+
+    // Log to unit history
+    record_unit_history(
+        $inv_id,
+        $unit['brand_model'] ?? '',
+        $unit['aircon_type'] ?? '',
+        'status_change',
+        'status',
+        $old_status,
+        $new_status,
+        $note_text
+    );
+
+    header("Location: inventory.php?success=status_updated");
     exit;
 }
 
@@ -107,10 +180,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
     }
 
     $id = intval($_POST['delete_id']);
+
+    // Find item before deleting for history
+    $deleted_unit = null;
+    foreach ($all_items as $i) {
+        if ((int)$i['id'] === $id) { $deleted_unit = $i; break; }
+    }
+
     $all_items = array_filter($all_items, fn($item) => $item['id'] != $id);
     $all_items = array_values($all_items);
 
     write_json(INVENTORY_FILE, $all_items);
+
+    // Log deletion
+    if ($deleted_unit) {
+        record_unit_history(
+            $id,
+            $deleted_unit['brand_model'] ?? '',
+            $deleted_unit['aircon_type'] ?? '',
+            'deleted',
+            'status',
+            $deleted_unit['status'] ?? '',
+            '',
+            'Unit removed from inventory'
+        );
+    }
 
     header("Location: inventory.php?success=deleted");
     exit;
@@ -183,7 +277,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                                 $status = 'Available';
                             }
 
-                            $existing_items[] = [
+                            $new_item = [
                                 'id'              => generate_id($existing_items),
                                 'aircon_type'     => $aircon_type,
                                 'brand_model'     => $brand_model,
@@ -197,7 +291,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                                 'card_price'      => floatval($map['card_price'] ?? 0),
                                 'created_at'      => date('Y-m-d H:i:s'),
                             ];
+
+                            $existing_items[] = $new_item;
                             $imported++;
+
+                            // Log each imported unit
+                            record_unit_history(
+                                $new_item['id'],
+                                $brand_model,
+                                $aircon_type,
+                                'added',
+                                'status',
+                                '',
+                                $status,
+                                'Imported via CSV'
+                            );
                         }
 
                         fclose($handle);
@@ -291,6 +399,9 @@ render_header('Inventory');
         <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addItemModal">
             <i data-lucide="plus" class="me-1"></i>Add New Item
         </button>
+        <button class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#updateStatusModal">
+            <i data-lucide="refresh-cw" class="me-1"></i>Update Status
+        </button>
         <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#importCsvModal">
             <i data-lucide="upload" class="me-1"></i>Import CSV
         </button>
@@ -307,7 +418,13 @@ render_header('Inventory');
     </div>
 <?php elseif ($success === 'added'): ?>
     <div class="alert alert-success alert-dismissible fade show">
-        Item successfully added!
+        Item successfully added! <a href="unit_history.php" class="alert-link ms-1">View in Unit History →</a>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php elseif ($success === 'status_updated'): ?>
+    <div class="alert alert-success alert-dismissible fade show">
+        <i data-lucide="check-circle" style="width:15px;" class="me-1"></i>
+        Status updated successfully! <a href="unit_history.php" class="alert-link ms-1">View audit trail →</a>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
 <?php elseif ($success === 'deleted'): ?>
@@ -449,7 +566,7 @@ render_header('Inventory');
                         <th class="py-3">Customer Price (Cash)</th>
                         <th class="py-3">Customer Price (Card)</th>
                         <th class="py-3">Created At</th>
-                        <th class="px-3 py-3 text-end">Action</th>
+                        <th class="px-3 py-3 text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -493,6 +610,19 @@ render_header('Inventory');
                         <td>₱<?= number_format((float)($item['card_price'] ?? 0), 2) ?></td>
                         <td class="text-muted small"><?= htmlspecialchars($item['created_at'] ?? '') ?></td>
                         <td class="px-3 text-end">
+                            <!-- Quick Update Status button per row -->
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-warning me-1"
+                                    title="Update Status"
+                                    onclick='openUpdateStatus(<?= json_encode([
+                                        "id"          => (int)$item["id"],
+                                        "brand_model" => $item["brand_model"] ?? "",
+                                        "aircon_type" => $item["aircon_type"] ?? "",
+                                        "hp"          => $item["hp"] ?? "",
+                                        "status"      => $item["status"] ?? "",
+                                    ]) ?>)'>
+                                <i data-lucide="refresh-cw" style="width:13px;"></i>
+                            </button>
                             <form method="POST" style="display:inline;">
                                 <input type="hidden" name="delete_id" value="<?= $item['id'] ?>">
                                 <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
@@ -518,15 +648,12 @@ render_header('Inventory');
         </span>
         <nav>
             <ul class="pagination pagination-sm mb-0">
-                <!-- First -->
                 <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
                     <a class="page-link" href="<?= inv_qs(['page' => 1]) ?>" title="First">«</a>
                 </li>
-                <!-- Prev -->
                 <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
                     <a class="page-link" href="<?= inv_qs(['page' => $page - 1]) ?>">‹</a>
                 </li>
-                <!-- Numbered pages (window of 5) -->
                 <?php
                 $window_start = max(1, $page - 2);
                 $window_end   = min($total_pages, $page + 2);
@@ -541,11 +668,9 @@ render_header('Inventory');
                 if ($window_end < $total_pages): ?>
                     <li class="page-item disabled"><span class="page-link">…</span></li>
                 <?php endif; ?>
-                <!-- Next -->
                 <li class="page-item <?= $page >= $total_pages ? 'disabled' : '' ?>">
                     <a class="page-link" href="<?= inv_qs(['page' => $page + 1]) ?>">›</a>
                 </li>
-                <!-- Last -->
                 <li class="page-item <?= $page >= $total_pages ? 'disabled' : '' ?>">
                     <a class="page-link" href="<?= inv_qs(['page' => $total_pages]) ?>" title="Last">»</a>
                 </li>
@@ -561,46 +686,37 @@ render_header('Inventory');
 <div class="modal fade" id="addItemModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content border-0 shadow">
-
       <div class="modal-header bg-primary text-white">
         <h5 class="modal-title fw-bold">Add New Aircon Item</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-
       <div class="modal-body p-4">
         <form method="POST">
             <input type="hidden" name="action" value="add">
             <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-
             <div class="row g-3">
-
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">Aircon Type <span class="text-danger">*</span></label>
                     <input type="text" name="aircon_type" class="form-control"
                            placeholder="e.g. Inverter, Window, Split" required>
                 </div>
-
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">Brand / Model <span class="text-danger">*</span></label>
                     <input type="text" name="brand_model" class="form-control"
                            placeholder="e.g. Carrier Split Type" required>
                 </div>
-
                 <div class="col-md-2">
                     <label class="form-label fw-semibold">HP</label>
                     <input type="text" name="hp" class="form-control" placeholder="e.g. 1.5">
                 </div>
-
                 <div class="col-md-2">
                     <label class="form-label fw-semibold">Model Number</label>
                     <input type="text" name="model_number" class="form-control">
                 </div>
-
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">Supplier</label>
                     <input type="text" name="supplier" class="form-control">
                 </div>
-
                 <div class="col-md-2">
                     <label class="form-label fw-semibold">Status</label>
                     <select name="status" class="form-select" required>
@@ -609,36 +725,108 @@ render_header('Inventory');
                         <option value="Reserved">Reserved</option>
                     </select>
                 </div>
-
                 <div class="col-md-3">
                     <label class="form-label fw-semibold">Franchise Price (₱)</label>
                     <input type="number" step="0.01" min="0" name="franchise_price" class="form-control" placeholder="0.00">
                 </div>
-
                 <div class="col-md-3">
                     <label class="form-label fw-semibold">Subdealer Price (₱)</label>
                     <input type="number" step="0.01" min="0" name="subdealer_price" class="form-control" placeholder="0.00">
                 </div>
-
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Customer Price - Cash (₱)</label>
                     <input type="number" step="0.01" min="0" name="cash_price" class="form-control" placeholder="0.00">
                 </div>
-
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Customer Price - Bank/Credit Card (₱)</label>
                     <input type="number" step="0.01" min="0" name="card_price" class="form-control" placeholder="0.00">
                 </div>
-
             </div>
-
             <div class="modal-footer border-0 px-0 pb-0 mt-3">
                 <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
                 <button type="submit" class="btn btn-primary px-4">Save Item</button>
             </div>
         </form>
       </div>
+    </div>
+  </div>
+</div>
 
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- UPDATE STATUS MODAL                                            -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="updateStatusModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header bg-warning text-dark">
+        <h5 class="modal-title fw-bold">
+            <i data-lucide="refresh-cw" class="me-2" style="width:16px;"></i>Update Unit Status
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST">
+        <input type="hidden" name="action"       value="update_status">
+        <input type="hidden" name="csrf_token"   value="<?= $_SESSION['csrf_token'] ?>">
+        <input type="hidden" name="inventory_id" id="us_inventory_id">
+        <div class="modal-body p-4">
+
+            <!-- Unit info display (populated by JS when opened from row) -->
+            <div id="us_unit_info" class="alert alert-light border py-2 mb-3" style="display:none;">
+                <div class="fw-semibold small" id="us_unit_label"></div>
+                <div class="small text-muted" id="us_unit_sub"></div>
+            </div>
+
+            <!-- Dropdown (shown when opened from header button) -->
+            <div id="us_select_wrap" class="mb-3">
+                <label class="form-label fw-semibold">Select Unit <span class="text-danger">*</span></label>
+                <select name="inventory_id" id="us_unit_select" class="form-select"
+                        onchange="updateStatusBadge(this)">
+                    <option value="">— Choose a unit —</option>
+                    <?php foreach ($all_items as $inv_item): ?>
+                    <option value="<?= (int)$inv_item['id'] ?>"
+                            data-status="<?= htmlspecialchars($inv_item['status'] ?? '') ?>"
+                            data-label="<?= htmlspecialchars(($inv_item['brand_model'] ?? '') . ' · ' . ($inv_item['aircon_type'] ?? '') . ($inv_item['hp'] ? ' ' . $inv_item['hp'] . 'HP' : '')) ?>">
+                        #<?= (int)$inv_item['id'] ?> — <?= htmlspecialchars($inv_item['brand_model'] ?? '') ?>
+                        (<?= htmlspecialchars($inv_item['aircon_type'] ?? '') ?>
+                        <?= htmlspecialchars($inv_item['hp'] ?? '') ?>HP)
+                        · <?= htmlspecialchars($inv_item['status'] ?? '') ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="mb-3" id="us_current_status_row" style="display:none;">
+                <label class="form-label fw-semibold small text-muted">Current Status</label><br>
+                <span id="us_current_badge" class="badge fs-6">—</span>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold">New Status <span class="text-danger">*</span></label>
+                <select name="new_status" id="us_new_status" class="form-select" required>
+                    <option value="">— Select new status —</option>
+                    <option value="Available">Available</option>
+                    <option value="Installed">Installed</option>
+                    <option value="Reserved">Reserved</option>
+                    <option value="Defective">Defective</option>
+                </select>
+            </div>
+
+            <div class="mb-0">
+                <label class="form-label fw-semibold">Reason / Note <span class="text-muted fw-normal">(optional)</span></label>
+                <input type="text" class="form-control" name="status_note"
+                       placeholder="e.g. Installed at client site, returned from job…">
+            </div>
+
+            <div class="alert alert-warning py-2 small mt-3 mb-0">
+                <i data-lucide="info" style="width:13px;" class="me-1"></i>
+                This change will be logged to the <a href="unit_history.php" class="alert-link">Unit History</a> audit trail.
+            </div>
+        </div>
+        <div class="modal-footer border-0">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-warning px-4 fw-semibold">Update Status</button>
+        </div>
+      </form>
     </div>
   </div>
 </div>
@@ -649,17 +837,14 @@ render_header('Inventory');
 <div class="modal fade" id="importCsvModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content border-0 shadow">
-
       <div class="modal-header bg-success text-white">
         <h5 class="modal-title fw-bold"><i data-lucide="upload" class="me-2" style="width:18px;"></i>Import Inventory from CSV</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-
       <div class="modal-body p-4">
-
         <div class="alert alert-info py-3 mb-4">
           <h6 class="fw-bold mb-2"><i data-lucide="info" style="width:15px;" class="me-1"></i>Instructions</h6>
-          <p class="small mb-2">Your CSV must include a header row. Required columns are marked <span class="text-danger fw-bold">*</span>. Column order doesn't matter — headers are matched by name.</p>
+          <p class="small mb-2">Your CSV must include a header row. Required columns are marked <span class="text-danger fw-bold">*</span>.</p>
           <div class="row g-2 small">
             <div class="col-md-6">
               <strong>Required:</strong>
@@ -732,12 +917,95 @@ render_header('Inventory');
           </div>
         </form>
       </div>
-
     </div>
   </div>
 </div>
 
 <script>
+// ── Update Status Modal logic ─────────────────────────────────────
+
+const STATUS_COLORS = {
+    'Available': 'bg-success',
+    'Installed': 'bg-secondary',
+    'Reserved':  'bg-warning text-dark',
+    'Defective': 'bg-danger',
+};
+
+/**
+ * Open Update Status modal pre-filled from a row button.
+ */
+function openUpdateStatus(item) {
+    // Hide the dropdown — we know which unit
+    document.getElementById('us_select_wrap').style.display  = 'none';
+    document.getElementById('us_unit_info').style.display    = 'block';
+    document.getElementById('us_current_status_row').style.display = 'block';
+
+    document.getElementById('us_inventory_id').value = item.id;
+    document.getElementById('us_unit_select').value  = ''; // clear dropdown
+
+    document.getElementById('us_unit_label').textContent =
+        item.brand_model + (item.aircon_type ? '  ·  ' + item.aircon_type : '') +
+        (item.hp ? '  ' + item.hp + 'HP' : '');
+    document.getElementById('us_unit_sub').textContent = 'Unit #' + item.id;
+
+    const badge = document.getElementById('us_current_badge');
+    badge.className = 'badge fs-6 ' + (STATUS_COLORS[item.status] || 'bg-light text-dark');
+    badge.textContent = item.status || '—';
+
+    // Reset new status select
+    document.getElementById('us_new_status').value = '';
+
+    new bootstrap.Modal(document.getElementById('updateStatusModal')).show();
+}
+
+/**
+ * Called when the header "Update Status" button is used (no unit pre-selected).
+ * The dropdown is shown instead.
+ */
+document.getElementById('updateStatusModal').addEventListener('show.bs.modal', function (e) {
+    // Only reset if NOT triggered by openUpdateStatus (which sets us_inventory_id)
+    if (!document.getElementById('us_inventory_id').value) {
+        document.getElementById('us_select_wrap').style.display  = 'block';
+        document.getElementById('us_unit_info').style.display    = 'none';
+        document.getElementById('us_current_status_row').style.display = 'none';
+        document.getElementById('us_unit_select').value = '';
+        document.getElementById('us_new_status').value  = '';
+    }
+});
+
+document.getElementById('updateStatusModal').addEventListener('hidden.bs.modal', function () {
+    // Full reset on close
+    document.getElementById('us_inventory_id').value = '';
+    document.getElementById('us_select_wrap').style.display  = 'block';
+    document.getElementById('us_unit_info').style.display    = 'none';
+    document.getElementById('us_current_status_row').style.display = 'none';
+    document.getElementById('us_unit_select').value = '';
+    document.getElementById('us_new_status').value  = '';
+    lucide.createIcons();
+});
+
+/**
+ * Sync the hidden input + badge when user picks from the dropdown.
+ */
+function updateStatusBadge(select) {
+    const opt = select.options[select.selectedIndex];
+    const st  = opt.getAttribute('data-status') || '';
+    const id  = select.value;
+
+    document.getElementById('us_inventory_id').value = id;
+
+    const row   = document.getElementById('us_current_status_row');
+    const badge = document.getElementById('us_current_badge');
+    if (st && id) {
+        badge.className   = 'badge fs-6 ' + (STATUS_COLORS[st] || 'bg-light text-dark');
+        badge.textContent = st;
+        row.style.display = 'block';
+    } else {
+        row.style.display = 'none';
+    }
+}
+
+// ── CSV Import ────────────────────────────────────────────────────
 function confirmReplace(radio) {
     if (!confirm('Replace mode will DELETE all existing inventory items and replace them with the CSV data.\n\nAre you sure?')) {
         document.getElementById('mode_append').checked = true;

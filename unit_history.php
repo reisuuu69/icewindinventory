@@ -1,8 +1,8 @@
 <?php
 /**
- * Icewind HVAC Inventory System - Unit Inventory History
- * Tracks per-unit status changes, additions, deletions, and price edits.
- * Google Sheets tab: "UnitHistory"
+ * Icewind HVAC Inventory System - Unit History
+ * Full audit trail: additions, status changes, price edits, deletions, notes.
+ * Status updates are performed in inventory.php and logged here automatically.
  */
 
 require_once 'config.php';
@@ -10,58 +10,6 @@ require_once 'functions.php';
 
 check_auth();
 
-// ─── Ensure UnitHistory sheet headers exist ───────────────────────
-// (First write auto-creates headers in sheets_write)
-
-// ─── Helper: read unit history ────────────────────────────────────
-function get_unit_history($inventory_id = null, $limit = 500) {
-    $rows = sheets_read('UnitHistory');
-
-    if ($inventory_id !== null) {
-        $rows = array_filter($rows, fn($r) => (string)($r['inventory_id'] ?? '') === (string)$inventory_id);
-    }
-
-    usort($rows, fn($a, $b) =>
-        strtotime($b['changed_at'] ?? '0') - strtotime($a['changed_at'] ?? '0')
-    );
-
-    return array_slice(array_values($rows), 0, $limit);
-}
-
-// ─── Helper: record a unit history event ─────────────────────────
-function record_unit_history($inventory_id, $brand_model, $aircon_type, $event_type, $field, $old_value, $new_value, $notes = '') {
-    $existing = sheets_read('UnitHistory');
-
-    $max_id = 0;
-    foreach ($existing as $r) {
-        if ((int)($r['id'] ?? 0) > $max_id) $max_id = (int)$r['id'];
-    }
-
-    $row = [
-        'id'           => $max_id + 1,
-        'inventory_id' => $inventory_id,
-        'brand_model'  => $brand_model,
-        'aircon_type'  => $aircon_type,
-        'event_type'   => $event_type,   // added, status_change, price_edit, deleted, note
-        'field'        => $field,
-        'old_value'    => $old_value,
-        'new_value'    => $new_value,
-        'changed_by'   => $_SESSION['user']['username'] ?? 'system',
-        'changed_at'   => date('Y-m-d H:i:s'),
-        'notes'        => $notes,
-    ];
-
-    $existing[] = $row;
-    sheets_write('UnitHistory', $existing, [
-        'id','inventory_id','brand_model','aircon_type',
-        'event_type','field','old_value','new_value',
-        'changed_by','changed_at','notes'
-    ]);
-
-    return $row;
-}
-
-// ─── CSRF ─────────────────────────────────────────────────────────
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
@@ -70,22 +18,24 @@ $error = $success = '';
 
 // ─── Export CSV ───────────────────────────────────────────────────
 if (isset($_GET['export'])) {
-    $rows = get_unit_history(null, 5000);
+    $rows = sheets_read('UnitHistory');
 
-    // Apply same filters
-    $fe = trim($_GET['event_type']   ?? '');
-    $fs = trim($_GET['search']       ?? '');
-    $ff = trim($_GET['date_from']    ?? '');
-    $ft = trim($_GET['date_to']      ?? '');
+    $fe = trim($_GET['event_type'] ?? '');
+    $fs = trim($_GET['search']     ?? '');
+    $ff = trim($_GET['date_from']  ?? '');
+    $ft = trim($_GET['date_to']    ?? '');
 
     if ($fe) $rows = array_filter($rows, fn($r) => ($r['event_type'] ?? '') === $fe);
     if ($fs) $rows = array_filter($rows, fn($r) =>
-        stripos($r['brand_model']  ?? '', $fs) !== false ||
-        stripos($r['aircon_type']  ?? '', $fs) !== false ||
-        stripos($r['new_value']    ?? '', $fs) !== false
+        stripos($r['brand_model'] ?? '', $fs) !== false ||
+        stripos($r['aircon_type'] ?? '', $fs) !== false ||
+        stripos($r['new_value']   ?? '', $fs) !== false ||
+        stripos($r['notes']       ?? '', $fs) !== false
     );
     if ($ff) { $from = strtotime($ff . ' 00:00:00'); $rows = array_filter($rows, fn($r) => strtotime($r['changed_at'] ?? '0') >= $from); }
     if ($ft) { $to   = strtotime($ft . ' 23:59:59'); $rows = array_filter($rows, fn($r) => strtotime($r['changed_at'] ?? '0') <= $to);   }
+
+    usort($rows, fn($a, $b) => strtotime($b['changed_at'] ?? '0') - strtotime($a['changed_at'] ?? '0'));
 
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="unit_history_' . date('Y-m-d') . '.csv"');
@@ -98,7 +48,7 @@ if (isset($_GET['export'])) {
             $r['inventory_id'] ?? '',
             $r['brand_model']  ?? '',
             $r['aircon_type']  ?? '',
-            ucwords(str_replace('_',' ', $r['event_type'] ?? '')),
+            ucwords(str_replace('_', ' ', $r['event_type'] ?? '')),
             $r['field']        ?? '',
             $r['old_value']    ?? '',
             $r['new_value']    ?? '',
@@ -115,13 +65,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_n
     if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
         $error = 'Invalid CSRF token.';
     } else {
-        $inv_id      = intval($_POST['inventory_id'] ?? 0);
-        $note_text   = trim($_POST['note_text'] ?? '');
+        $inv_id    = intval($_POST['inventory_id'] ?? 0);
+        $note_text = trim($_POST['note_text'] ?? '');
 
         if (!$inv_id || !$note_text) {
             $error = 'Please select a unit and enter a note.';
         } else {
-            $inv = read_json(INVENTORY_FILE);
+            $inv  = read_json(INVENTORY_FILE);
             $unit = null;
             foreach ($inv as $i) {
                 if ((int)$i['id'] === $inv_id) { $unit = $i; break; }
@@ -131,8 +81,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_n
             } else {
                 record_unit_history(
                     $inv_id,
-                    $unit['brand_model']  ?? '',
-                    $unit['aircon_type']  ?? '',
+                    $unit['brand_model'] ?? '',
+                    $unit['aircon_type'] ?? '',
                     'note',
                     'notes',
                     '',
@@ -140,54 +90,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_n
                     $note_text
                 );
                 header('Location: unit_history.php?success=note_added');
-                exit;
-            }
-        }
-    }
-}
-
-// ─── Status Update with History ──────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_status') {
-    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
-        $error = 'Invalid CSRF token.';
-    } else {
-        $inv_id     = intval($_POST['inventory_id'] ?? 0);
-        $new_status = trim($_POST['new_status'] ?? '');
-        $note_text  = trim($_POST['status_note'] ?? '');
-        $allowed    = ['Available', 'Installed', 'Reserved', 'Defective'];
-
-        if (!$inv_id || !in_array($new_status, $allowed)) {
-            $error = 'Invalid unit or status.';
-        } else {
-            $inv = read_json(INVENTORY_FILE);
-            $old_status = '';
-            $unit = null;
-            foreach ($inv as &$i) {
-                if ((int)$i['id'] === $inv_id) {
-                    $old_status     = $i['status'] ?? '';
-                    $unit           = $i;
-                    $i['status']    = $new_status;
-                    break;
-                }
-            } unset($i);
-
-            if (!$unit) {
-                $error = 'Unit not found.';
-            } elseif ($old_status === $new_status) {
-                $error = 'Status is already set to ' . $new_status . '.';
-            } else {
-                write_json(INVENTORY_FILE, $inv);
-                record_unit_history(
-                    $inv_id,
-                    $unit['brand_model']  ?? '',
-                    $unit['aircon_type']  ?? '',
-                    'status_change',
-                    'status',
-                    $old_status,
-                    $new_status,
-                    $note_text
-                );
-                header('Location: unit_history.php?success=status_updated');
                 exit;
             }
         }
@@ -203,16 +105,17 @@ $filter_unit   = intval($_GET['unit_id']  ?? 0);
 $page          = max(1, intval($_GET['page'] ?? 1));
 $per_page      = 25;
 
-$all_rows = get_unit_history(null, 5000);
+$all_rows = sheets_read('UnitHistory');
+usort($all_rows, fn($a, $b) => strtotime($b['changed_at'] ?? '0') - strtotime($a['changed_at'] ?? '0'));
 
 // Apply filters
 if ($filter_event)  $all_rows = array_filter($all_rows, fn($r) => ($r['event_type'] ?? '') === $filter_event);
 if ($filter_unit)   $all_rows = array_filter($all_rows, fn($r) => (int)($r['inventory_id'] ?? 0) === $filter_unit);
 if ($filter_search) $all_rows = array_filter($all_rows, fn($r) =>
-    stripos($r['brand_model']  ?? '', $filter_search) !== false ||
-    stripos($r['aircon_type']  ?? '', $filter_search) !== false ||
-    stripos($r['new_value']    ?? '', $filter_search) !== false ||
-    stripos($r['notes']        ?? '', $filter_search) !== false
+    stripos($r['brand_model'] ?? '', $filter_search) !== false ||
+    stripos($r['aircon_type'] ?? '', $filter_search) !== false ||
+    stripos($r['new_value']   ?? '', $filter_search) !== false ||
+    stripos($r['notes']       ?? '', $filter_search) !== false
 );
 if ($filter_from) { $from = strtotime($filter_from . ' 00:00:00'); $all_rows = array_filter($all_rows, fn($r) => strtotime($r['changed_at'] ?? '0') >= $from); }
 if ($filter_to)   { $to   = strtotime($filter_to   . ' 23:59:59'); $all_rows = array_filter($all_rows, fn($r) => strtotime($r['changed_at'] ?? '0') <= $to);   }
@@ -223,15 +126,15 @@ $total_pages = max(1, ceil($total_rows / $per_page));
 $page        = min($page, $total_pages);
 $rows        = array_slice($all_rows, ($page - 1) * $per_page, $per_page);
 
-// Summary counts (unfiltered)
-$all_for_stats = get_unit_history(null, 5000);
+// Summary counts (always from full unfiltered sheet)
+$all_for_stats = sheets_read('UnitHistory');
 $stat_counts = ['added' => 0, 'status_change' => 0, 'price_edit' => 0, 'deleted' => 0, 'note' => 0];
 foreach ($all_for_stats as $r) {
     $t = $r['event_type'] ?? '';
     if (isset($stat_counts[$t])) $stat_counts[$t]++;
 }
 
-// All inventory items for dropdowns
+// All inventory items for the Add Note dropdown
 $inventory = read_json(INVENTORY_FILE);
 
 // Build QS helper
@@ -254,7 +157,7 @@ render_header('Unit History');
 ?>
 
 <style>
-/* ── Timeline & History Page Styles ──────────────────────────── */
+/* ── Event Badges ──────────────────────────────────────────── */
 .event-badge {
     display: inline-flex;
     align-items: center;
@@ -267,25 +170,19 @@ render_header('Unit History');
     text-transform: uppercase;
     white-space: nowrap;
 }
-.event-added        { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-.event-status_change{ background: #fef9c3; color: #854d0e; border: 1px solid #fde047; }
-.event-price_edit   { background: #ede9fe; color: #6d28d9; border: 1px solid #c4b5fd; }
-.event-deleted      { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
-.event-note         { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
+.event-added         { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.event-status_change { background: #fef9c3; color: #854d0e; border: 1px solid #fde047; }
+.event-price_edit    { background: #ede9fe; color: #6d28d9; border: 1px solid #c4b5fd; }
+.event-deleted       { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+.event-note          { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
 
-/* Diff pill */
-.diff-old { background: #fee2e2; color: #b91c1c; padding: 1px 7px; border-radius: 4px; font-size: 12px; text-decoration: line-through; }
-.diff-new  { background: #dcfce7; color: #15803d; padding: 1px 7px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+/* Diff pills */
+.diff-old   { background: #fee2e2; color: #b91c1c; padding: 1px 7px; border-radius: 4px; font-size: 12px; text-decoration: line-through; }
+.diff-new   { background: #dcfce7; color: #15803d; padding: 1px 7px; border-radius: 4px; font-size: 12px; font-weight: 600; }
 .diff-arrow { color: #94a3b8; font-size: 11px; margin: 0 3px; }
 
-/* Timeline dot in table */
-.timeline-dot {
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    display: inline-block;
-    flex-shrink: 0;
-    margin-right: 6px;
-}
+/* Timeline dot */
+.timeline-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; margin-right: 6px; }
 .dot-added         { background: #16a34a; }
 .dot-status_change { background: #ca8a04; }
 .dot-price_edit    { background: #7c3aed; }
@@ -293,13 +190,7 @@ render_header('Unit History');
 .dot-note          { background: #0284c7; }
 
 /* Stat cards */
-.stat-hist {
-    background: #fff;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 18px 22px 14px;
-    transition: box-shadow 0.2s;
-}
+.stat-hist { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 22px 14px; transition: box-shadow 0.2s; }
 .stat-hist:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.07); }
 .stat-hist .num  { font-size: 2rem; font-weight: 800; letter-spacing: -0.04em; line-height: 1; }
 .stat-hist .lbl  { font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
@@ -321,36 +212,32 @@ render_header('Unit History');
     overflow: hidden;
     text-overflow: ellipsis;
 }
-
-/* Sticky top bar */
-.history-topbar {
-    position: sticky;
-    top: 56px;
-    z-index: 100;
-    background: #f8fafc;
-    border-bottom: 1px solid #e2e8f0;
-    padding: 10px 0;
-    margin-bottom: 20px;
-}
 </style>
 
-<!-- ── Page Header ──────────────────────────────────────────── -->
+<!-- ── Page Header ─────────────────────────────────────────── -->
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
     <div>
         <h1 class="h2 fw-bold mb-0">
-            <i data-lucide="clock" class="me-2 text-primary" style="width:22px;height:22px;"></i>Unit Inventory History
+            <i data-lucide="clock" class="me-2 text-primary" style="width:22px;height:22px;"></i>Unit History
         </h1>
-        <p class="text-muted small mb-0 mt-1">Full audit trail of every unit's lifecycle — additions, status changes, edits, and notes.</p>
+        <p class="text-muted small mb-0 mt-1">
+            Full audit trail of every unit's lifecycle —
+            <span class="text-success fw-semibold">additions</span>,
+            <span class="text-warning fw-semibold">status changes</span>,
+            <span class="text-purple fw-semibold">price edits</span>,
+            <span class="text-danger fw-semibold">deletions</span>, and
+            <span class="text-info fw-semibold">notes</span>.
+            Status changes are made in <a href="inventory.php">Inventory</a>.
+        </p>
     </div>
     <div class="btn-toolbar mb-2 mb-md-0 gap-2">
         <button type="button" class="btn btn-sm btn-outline-primary"
                 data-bs-toggle="modal" data-bs-target="#addNoteModal">
             <i data-lucide="message-square-plus" class="me-1" style="width:14px;"></i>Add Note
         </button>
-        <button type="button" class="btn btn-sm btn-outline-warning"
-                data-bs-toggle="modal" data-bs-target="#updateStatusModal">
+        <a href="inventory.php" class="btn btn-sm btn-outline-warning">
             <i data-lucide="refresh-cw" class="me-1" style="width:14px;"></i>Update Status
-        </button>
+        </a>
         <a href="<?= uhs_qs(['export' => 1, 'page' => '']) ?>" class="btn btn-sm btn-outline-secondary">
             <i data-lucide="download" class="me-1" style="width:14px;"></i>Export CSV
         </a>
@@ -358,9 +245,31 @@ render_header('Unit History');
 </div>
 
 <!-- ── Alerts ──────────────────────────────────────────────── -->
-<?php if ($success === 'note_added'):    ?><div class="alert alert-success alert-dismissible fade show py-2"><i data-lucide="check-circle" style="width:14px;" class="me-1"></i> Note recorded successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div><?php endif; ?>
-<?php if ($success === 'status_updated'):?><div class="alert alert-success alert-dismissible fade show py-2"><i data-lucide="check-circle" style="width:14px;" class="me-1"></i> Status updated and logged to history! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div><?php endif; ?>
-<?php if ($error): ?><div class="alert alert-danger alert-dismissible fade show py-2"><?= htmlspecialchars($error) ?> <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div><?php endif; ?>
+<?php if ($success === 'note_added'): ?>
+    <div class="alert alert-success alert-dismissible fade show py-2">
+        <i data-lucide="check-circle" style="width:14px;" class="me-1"></i> Note recorded successfully!
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php endif; ?>
+<?php if ($error): ?>
+    <div class="alert alert-danger alert-dismissible fade show py-2">
+        <?= htmlspecialchars($error) ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php endif; ?>
+
+<!-- ── Info banner linking to inventory for status changes ─── -->
+<div class="alert alert-light border d-flex align-items-center gap-3 py-2 mb-4">
+    <i data-lucide="info" style="width:18px;height:18px;color:#0056b3;flex-shrink:0;"></i>
+    <div class="small">
+        <strong>Want to update a unit's status?</strong>
+        Go to <a href="inventory.php" class="fw-semibold">Inventory</a> and click the
+        <span class="badge bg-warning text-dark" style="font-size:11px;">
+            <i data-lucide="refresh-cw" style="width:10px;"></i> Update Status
+        </span>
+        button next to any unit. Changes will automatically appear in this audit trail.
+    </div>
+</div>
 
 <!-- ── Stat Cards ──────────────────────────────────────────── -->
 <div class="row g-3 mb-4">
@@ -375,23 +284,30 @@ render_header('Unit History');
     foreach ($stat_cfg as $key => [$color, $icon, $label]):
     ?>
     <div class="col-6 col-md">
-        <div class="stat-hist">
-            <div style="color:<?= $color ?>;margin-bottom:10px;">
-                <i data-lucide="<?= $icon ?>" style="width:18px;height:18px;"></i>
+        <a href="<?= uhs_qs(['event_type' => $key, 'page' => 1]) ?>"
+           class="text-decoration-none"
+           title="Filter by <?= $label ?>">
+            <div class="stat-hist <?= $filter_event === $key ? 'border-2' : '' ?>"
+                 style="<?= $filter_event === $key ? 'border-color:' . $color . ';' : '' ?>">
+                <div style="color:<?= $color ?>;margin-bottom:10px;">
+                    <i data-lucide="<?= $icon ?>" style="width:18px;height:18px;"></i>
+                </div>
+                <div class="num" style="color:<?= $color ?>"><?= $stat_counts[$key] ?></div>
+                <div class="lbl"><?= $label ?></div>
             </div>
-            <div class="num" style="color:<?= $color ?>"><?= $stat_counts[$key] ?></div>
-            <div class="lbl"><?= $label ?></div>
-        </div>
+        </a>
     </div>
     <?php endforeach; ?>
     <div class="col-6 col-md">
-        <div class="stat-hist">
-            <div style="color:#0f172a;margin-bottom:10px;">
-                <i data-lucide="layers" style="width:18px;height:18px;"></i>
+        <a href="unit_history.php" class="text-decoration-none" title="Show all events">
+            <div class="stat-hist <?= !$filter_event ? 'border-2' : '' ?>">
+                <div style="color:#0f172a;margin-bottom:10px;">
+                    <i data-lucide="layers" style="width:18px;height:18px;"></i>
+                </div>
+                <div class="num"><?= array_sum($stat_counts) ?></div>
+                <div class="lbl">Total Events</div>
             </div>
-            <div class="num"><?= array_sum($stat_counts) ?></div>
-            <div class="lbl">Total Events</div>
-        </div>
+        </a>
     </div>
 </div>
 
@@ -405,17 +321,17 @@ render_header('Unit History');
                         <i data-lucide="search" style="width:14px;"></i>
                     </span>
                     <input type="text" class="form-control border-start-0" name="search"
-                           placeholder="Brand, type, value…" value="<?= htmlspecialchars($filter_search) ?>">
+                           placeholder="Brand, type, value, note…" value="<?= htmlspecialchars($filter_search) ?>">
                 </div>
             </div>
             <div class="col-md-2">
                 <select name="event_type" class="form-select">
                     <option value="">All Events</option>
-                    <option value="added"          <?= $filter_event === 'added'          ? 'selected' : '' ?>>Added</option>
-                    <option value="status_change"  <?= $filter_event === 'status_change'  ? 'selected' : '' ?>>Status Change</option>
-                    <option value="price_edit"     <?= $filter_event === 'price_edit'     ? 'selected' : '' ?>>Price Edit</option>
-                    <option value="deleted"        <?= $filter_event === 'deleted'        ? 'selected' : '' ?>>Deleted</option>
-                    <option value="note"           <?= $filter_event === 'note'           ? 'selected' : '' ?>>Note</option>
+                    <option value="added"         <?= $filter_event === 'added'         ? 'selected' : '' ?>>Added</option>
+                    <option value="status_change" <?= $filter_event === 'status_change' ? 'selected' : '' ?>>Status Change</option>
+                    <option value="price_edit"    <?= $filter_event === 'price_edit'    ? 'selected' : '' ?>>Price Edit</option>
+                    <option value="deleted"       <?= $filter_event === 'deleted'       ? 'selected' : '' ?>>Deleted</option>
+                    <option value="note"          <?= $filter_event === 'note'          ? 'selected' : '' ?>>Note</option>
                 </select>
             </div>
             <div class="col-md-2">
@@ -431,11 +347,11 @@ render_header('Unit History');
             </div>
             <div class="col-md-2">
                 <input type="date" class="form-control" name="date_from"
-                       value="<?= htmlspecialchars($filter_from) ?>" placeholder="From">
+                       value="<?= htmlspecialchars($filter_from) ?>">
             </div>
             <div class="col-md-2">
                 <input type="date" class="form-control" name="date_to"
-                       value="<?= htmlspecialchars($filter_to) ?>" placeholder="To">
+                       value="<?= htmlspecialchars($filter_to) ?>">
             </div>
             <div class="col-md-1 d-flex gap-1">
                 <button type="submit" class="btn btn-outline-primary flex-fill">Go</button>
@@ -490,7 +406,7 @@ render_header('Unit History');
                 <thead class="bg-light">
                     <tr>
                         <th class="px-4 py-3" style="width:155px;">Date &amp; Time</th>
-                        <th style="width:110px;">Event</th>
+                        <th style="width:120px;">Event</th>
                         <th>Unit</th>
                         <th>Field</th>
                         <th>Change</th>
@@ -510,7 +426,10 @@ render_header('Unit History');
                                 <a href="unit_history.php" class="d-block mt-1 small">Clear filters</a>
                             <?php else: ?>
                                 No unit history recorded yet.<br>
-                                <span class="small">History is recorded automatically when units are added, edited, or status-changed via this page.</span>
+                                <span class="small text-muted">
+                                    History is logged automatically when units are added, status-updated, or deleted via
+                                    <a href="inventory.php">Inventory</a>.
+                                </span>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -519,9 +438,7 @@ render_header('Unit History');
                     $dot_class = 'dot-' . $evt;
                     $badge_cls = 'event-' . $evt;
                     $evt_label = ucwords(str_replace('_', ' ', $evt));
-
-                    // Icon per event
-                    $evt_icon = match($evt) {
+                    $evt_icon  = match($evt) {
                         'added'         => 'plus-circle',
                         'status_change' => 'activity',
                         'price_edit'    => 'tag',
@@ -533,7 +450,9 @@ render_header('Unit History');
                     <tr>
                         <td class="px-4">
                             <div class="small text-muted"><?= date('M d, Y', strtotime($r['changed_at'] ?? '')) ?></div>
-                            <div class="small fw-semibold" style="font-variant-numeric:tabular-nums;"><?= date('g:i A', strtotime($r['changed_at'] ?? '')) ?></div>
+                            <div class="small fw-semibold" style="font-variant-numeric:tabular-nums;">
+                                <?= date('g:i A', strtotime($r['changed_at'] ?? '')) ?>
+                            </div>
                         </td>
                         <td>
                             <span class="event-badge <?= $badge_cls ?>">
@@ -666,7 +585,9 @@ render_header('Unit History');
                     </div>
                     <div class="alert alert-info py-2 small mb-0">
                         <i data-lucide="info" style="width:13px;" class="me-1"></i>
-                        Notes appear in the history log and are visible in exports.
+                        Notes appear in this audit trail and are included in CSV exports.
+                        To update a unit's status, use the
+                        <a href="inventory.php" class="alert-link">Inventory</a> page.
                     </div>
                 </div>
                 <div class="modal-footer border-0">
@@ -678,97 +599,6 @@ render_header('Unit History');
     </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════ -->
-<!-- UPDATE STATUS MODAL                                        -->
-<!-- ══════════════════════════════════════════════════════════ -->
-<div class="modal fade" id="updateStatusModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content border-0 shadow">
-            <div class="modal-header bg-warning text-dark">
-                <h5 class="modal-title fw-bold">
-                    <i data-lucide="refresh-cw" class="me-2" style="width:16px;"></i>Update Unit Status
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form method="POST">
-                <input type="hidden" name="action"     value="update_status">
-                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
-                <div class="modal-body p-4">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Select Unit <span class="text-danger">*</span></label>
-                        <select name="inventory_id" class="form-select" id="statusUnitSelect"
-                                onchange="updateCurrentStatus(this)" required>
-                            <option value="">— Choose a unit —</option>
-                            <?php foreach ($inventory as $inv_item): ?>
-                            <option value="<?= (int)$inv_item['id'] ?>"
-                                    data-status="<?= htmlspecialchars($inv_item['status'] ?? '') ?>">
-                                #<?= (int)$inv_item['id'] ?> — <?= htmlspecialchars($inv_item['brand_model'] ?? '') ?>
-                                (<?= htmlspecialchars($inv_item['aircon_type'] ?? '') ?>
-                                <?= htmlspecialchars($inv_item['hp'] ?? '') ?>HP)
-                                · <?= htmlspecialchars($inv_item['status'] ?? '') ?>
-                            </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div id="currentStatusRow" class="mb-3" style="display:none;">
-                        <label class="form-label fw-semibold small text-muted">Current Status</label>
-                        <div>
-                            <span id="currentStatusBadge" class="badge fs-6">—</span>
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">New Status <span class="text-danger">*</span></label>
-                        <select name="new_status" class="form-select" required>
-                            <option value="">— Select —</option>
-                            <option value="Available">Available</option>
-                            <option value="Installed">Installed</option>
-                            <option value="Reserved">Reserved</option>
-                            <option value="Defective">Defective</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Reason / Note (optional)</label>
-                        <input type="text" class="form-control" name="status_note"
-                               placeholder="e.g. Installed at client site, returned from job…">
-                    </div>
-                    <div class="alert alert-warning py-2 small mb-0">
-                        <i data-lucide="alert-triangle" style="width:13px;" class="me-1"></i>
-                        This will update the unit's status in the Inventory and create a history entry.
-                    </div>
-                </div>
-                <div class="modal-footer border-0">
-                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-warning px-4">Update Status</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<script>
-lucide.createIcons();
-
-// Show current status badge when unit is selected in Update Status modal
-function updateCurrentStatus(select) {
-    const row   = document.getElementById('currentStatusRow');
-    const badge = document.getElementById('currentStatusBadge');
-    const opt   = select.options[select.selectedIndex];
-    const st    = opt.getAttribute('data-status') || '';
-
-    if (st) {
-        const colorMap = {
-            'Available': 'bg-success',
-            'Installed': 'bg-secondary',
-            'Reserved':  'bg-warning text-dark',
-            'Defective': 'bg-danger',
-        };
-        badge.className = 'badge fs-6 ' + (colorMap[st] || 'bg-light text-dark');
-        badge.textContent = st;
-        row.style.display = 'block';
-    } else {
-        row.style.display = 'none';
-    }
-}
-</script>
+<script>lucide.createIcons();</script>
 
 <?php render_footer(); ?>

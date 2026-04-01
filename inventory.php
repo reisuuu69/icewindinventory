@@ -11,6 +11,26 @@ if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
+// ─── Export CSV (kept here so button works) ──────────────────────
+if (isset($_GET['export'])) {
+    $data = read_json(INVENTORY_FILE);
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="inventory_export_' . date('Y-m-d') . '.csv"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['id','aircon_type','brand_model','hp','model_number','supplier','status',
+                   'franchise_price','subdealer_price','cash_price','card_price','created_at']);
+    foreach ($data as $r) {
+        fputcsv($out, [
+            $r['id']??'',$r['aircon_type']??'',$r['brand_model']??'',$r['hp']??'',
+            $r['model_number']??'',$r['supplier']??'',$r['status']??'',
+            $r['franchise_price']??'',$r['subdealer_price']??'',
+            $r['cash_price']??'',$r['card_price']??'',$r['created_at']??''
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
 // Load inventory
 $items = read_json(INVENTORY_FILE);
 
@@ -232,25 +252,7 @@ render_header('Inventory');
 </div>
 
 <?php
-// ─── Export CSV (kept here so button works) ──────────────────────
-if (isset($_GET['export'])) {
-    $data = read_json(INVENTORY_FILE);
-    header('Content-Type: text/csv');
-    header('Content-Disposition: attachment; filename="inventory_export_' . date('Y-m-d') . '.csv"');
-    $out = fopen('php://output', 'w');
-    fputcsv($out, ['id','aircon_type','brand_model','hp','model_number','supplier','status',
-                   'franchise_price','subdealer_price','cash_price','card_price','created_at']);
-    foreach ($data as $r) {
-        fputcsv($out, [
-            $r['id']??'',$r['aircon_type']??'',$r['brand_model']??'',$r['hp']??'',
-            $r['model_number']??'',$r['supplier']??'',$r['status']??'',
-            $r['franchise_price']??'',$r['subdealer_price']??'',
-            $r['cash_price']??'',$r['card_price']??'',$r['created_at']??''
-        ]);
-    }
-    fclose($out);
-    exit;
-}
+
 ?>
 
 <?php if ($error): ?>

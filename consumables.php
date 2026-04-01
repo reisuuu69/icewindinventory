@@ -238,7 +238,7 @@ render_header('Consumables');
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Unit of Measure</label>
                         <input type="text" class="form-control" name="unit_of_measure" id="unit_of_measure"
-                               placeholder="e.g. Tank, Roll, Box" required>
+                               placeholder="e.g. Meters, Kilogram etc." required>
                     </div>
                     <div class="row">
                         <div class="col-6 mb-3">

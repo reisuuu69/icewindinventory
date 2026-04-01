@@ -3,7 +3,6 @@ session_start();
 require_once 'config.php';
 require_once 'functions.php';
 
-
 check_auth();
 
 // CSRF Token
@@ -11,7 +10,7 @@ if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// ─── Export CSV (kept here so button works) ──────────────────────
+// ─── Export CSV ──────────────────────────────────────────────────
 if (isset($_GET['export'])) {
     $data = read_json(INVENTORY_FILE);
     header('Content-Type: text/csv');
@@ -32,7 +31,7 @@ if (isset($_GET['export'])) {
 }
 
 // Load inventory
-$items = read_json(INVENTORY_FILE);
+$all_items = read_json(INVENTORY_FILE);
 
 // =========================
 // ADD ITEM
@@ -70,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add')
     }
 
     $new_item = [
-        'id'             => generate_id($items),
+        'id'             => generate_id($all_items),
         'aircon_type'    => $aircon_type,
         'brand_model'    => $brand_model,
         'hp'             => $hp,
@@ -84,8 +83,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add')
         'created_at'     => date('Y-m-d H:i:s'),
     ];
 
-    $items[] = $new_item;
-    write_json(INVENTORY_FILE, $items);
+    $all_items[] = $new_item;
+    write_json(INVENTORY_FILE, $all_items);
 
     header("Location: inventory.php?success=added");
     exit;
@@ -108,10 +107,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
     }
 
     $id = intval($_POST['delete_id']);
-    $items = array_filter($items, fn($item) => $item['id'] != $id);
-    $items = array_values($items);
+    $all_items = array_filter($all_items, fn($item) => $item['id'] != $id);
+    $all_items = array_values($all_items);
 
-    write_json(INVENTORY_FILE, $items);
+    write_json(INVENTORY_FILE, $all_items);
 
     header("Location: inventory.php?success=deleted");
     exit;
@@ -141,15 +140,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
             if (!$handle) {
                 $import_error = 'Could not open the uploaded file.';
             } else {
-                // Read header row
                 $header = fgetcsv($handle);
                 if (!$header) {
                     $import_error = 'CSV file appears to be empty.';
                 } else {
-                    // Normalize headers (lowercase, trim)
                     $header = array_map(fn($h) => strtolower(trim($h)), $header);
-
-                    // Required columns
                     $required = ['aircon_type', 'brand_model'];
                     $missing  = array_diff($required, $header);
 
@@ -161,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         $existing_items = read_json(INVENTORY_FILE);
                         $imported       = 0;
                         $skipped        = 0;
-                        $mode           = trim($_POST['import_mode'] ?? 'append'); // append | replace
+                        $mode           = trim($_POST['import_mode'] ?? 'append');
 
                         if ($mode === 'replace') {
                             $existing_items = [];
@@ -170,7 +165,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         $valid_statuses = ['Available', 'Installed', 'Reserved'];
 
                         while (($row = fgetcsv($handle)) !== false) {
-                            // Skip blank rows
                             if (count(array_filter($row, fn($v) => trim($v) !== '')) === 0) continue;
 
                             $row = array_pad($row, count($header), '');
@@ -179,7 +173,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                             $aircon_type = trim($map['aircon_type'] ?? '');
                             $brand_model = trim($map['brand_model'] ?? '');
 
-                            // Skip row if required fields are empty
                             if (empty($aircon_type) || empty($brand_model)) {
                                 $skipped++;
                                 continue;
@@ -227,11 +220,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
     }
 }
 
-$success = $_GET['success'] ?? '';
-$error   = $_GET['error'] ?? '';
-$msg     = $_GET['msg'] ?? '';
+// ─── Search & Filter ─────────────────────────────────────────────
+$search          = trim($_GET['search']      ?? '');
+$filter_status   = trim($_GET['status']      ?? '');
+$filter_type     = trim($_GET['aircon_type'] ?? '');
+$filter_supplier = trim($_GET['supplier']    ?? '');
 
-// Output starts here — loading_screen MUST come after all header() calls
+$filtered = $all_items;
+
+if ($search) {
+    $filtered = array_filter($filtered, fn($i) =>
+        stripos($i['brand_model']  ?? '', $search) !== false ||
+        stripos($i['model_number'] ?? '', $search) !== false ||
+        stripos($i['supplier']     ?? '', $search) !== false ||
+        stripos($i['aircon_type']  ?? '', $search) !== false
+    );
+}
+if ($filter_status) {
+    $filtered = array_filter($filtered, fn($i) => ($i['status'] ?? '') === $filter_status);
+}
+if ($filter_type) {
+    $filtered = array_filter($filtered, fn($i) =>
+        stripos($i['aircon_type'] ?? '', $filter_type) !== false
+    );
+}
+if ($filter_supplier) {
+    $filtered = array_filter($filtered, fn($i) =>
+        stripos($i['supplier'] ?? '', $filter_supplier) !== false
+    );
+}
+
+$filtered = array_values($filtered);
+
+// ─── Build unique filter options from full list ───────────────────
+$all_types     = array_unique(array_filter(array_column($all_items, 'aircon_type')));
+$all_suppliers = array_unique(array_filter(array_column($all_items, 'supplier')));
+sort($all_types);
+sort($all_suppliers);
+
+// ─── Pagination ───────────────────────────────────────────────────
+$per_page    = 10;
+$total_items = count($filtered);
+$total_pages = max(1, ceil($total_items / $per_page));
+$page        = max(1, min((int)($_GET['page'] ?? 1), $total_pages));
+$items       = array_slice($filtered, ($page - 1) * $per_page, $per_page);
+
+// Helper: build query string preserving filters
+function inv_qs($overrides = []) {
+    $base = [
+        'search'      => $_GET['search']      ?? '',
+        'status'      => $_GET['status']      ?? '',
+        'aircon_type' => $_GET['aircon_type'] ?? '',
+        'supplier'    => $_GET['supplier']    ?? '',
+        'page'        => $_GET['page']        ?? 1,
+    ];
+    return '?' . http_build_query(array_filter(array_merge($base, $overrides), fn($v) => $v !== ''));
+}
+
+$success = $_GET['success'] ?? '';
+$error   = $_GET['error']   ?? '';
+$msg     = $_GET['msg']     ?? '';
+
 require_once 'loading_screen.php';
 render_header('Inventory');
 ?>
@@ -250,10 +299,6 @@ render_header('Inventory');
         </a>
     </div>
 </div>
-
-<?php
-
-?>
 
 <?php if ($error): ?>
     <div class="alert alert-danger alert-dismissible fade show">
@@ -278,8 +323,116 @@ render_header('Inventory');
     </div>
 <?php endif; ?>
 
-<!-- TABLE -->
+<!-- ─── Search & Filters ─────────────────────────────────────── -->
+<div class="card shadow-sm border-0 mb-4">
+    <div class="card-body">
+        <form class="row g-2 align-items-end" method="GET" id="filterForm">
+            <!-- Search -->
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold text-muted mb-1">Search</label>
+                <div class="input-group">
+                    <span class="input-group-text bg-white border-end-0">
+                        <i data-lucide="search" style="width:15px;height:15px;"></i>
+                    </span>
+                    <input type="text" class="form-control border-start-0" name="search"
+                           placeholder="Brand, model, supplier…"
+                           value="<?= htmlspecialchars($search) ?>">
+                </div>
+            </div>
+            <!-- Status -->
+            <div class="col-md-2">
+                <label class="form-label small fw-semibold text-muted mb-1">Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All Statuses</option>
+                    <?php foreach (['Available','Installed','Reserved','Defective'] as $s): ?>
+                    <option value="<?= $s ?>" <?= $filter_status === $s ? 'selected' : '' ?>><?= $s ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <!-- Aircon Type -->
+            <div class="col-md-2">
+                <label class="form-label small fw-semibold text-muted mb-1">Aircon Type</label>
+                <select name="aircon_type" class="form-select">
+                    <option value="">All Types</option>
+                    <?php foreach ($all_types as $t): ?>
+                    <option value="<?= htmlspecialchars($t) ?>" <?= $filter_type === $t ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($t) ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <!-- Supplier -->
+            <div class="col-md-2">
+                <label class="form-label small fw-semibold text-muted mb-1">Supplier</label>
+                <select name="supplier" class="form-select">
+                    <option value="">All Suppliers</option>
+                    <?php foreach ($all_suppliers as $s): ?>
+                    <option value="<?= htmlspecialchars($s) ?>" <?= $filter_supplier === $s ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($s) ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <!-- Buttons -->
+            <div class="col-md-2 d-flex gap-2">
+                <button type="submit" class="btn btn-outline-primary flex-fill">
+                    <i data-lucide="filter" style="width:14px;" class="me-1"></i>Filter
+                </button>
+                <?php if ($search || $filter_status || $filter_type || $filter_supplier): ?>
+                <a href="inventory.php" class="btn btn-outline-secondary" title="Clear filters">
+                    <i data-lucide="x" style="width:14px;"></i>
+                </a>
+                <?php endif; ?>
+            </div>
+        </form>
+
+        <!-- Active filter tags -->
+        <?php if ($search || $filter_status || $filter_type || $filter_supplier): ?>
+        <div class="mt-2 d-flex flex-wrap gap-2 align-items-center">
+            <span class="small text-muted">Active filters:</span>
+            <?php if ($search): ?>
+                <span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle">
+                    Search: <?= htmlspecialchars($search) ?>
+                    <a href="<?= inv_qs(['search'=>'','page'=>1]) ?>" class="text-primary ms-1 text-decoration-none">×</a>
+                </span>
+            <?php endif; ?>
+            <?php if ($filter_status): ?>
+                <span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary-subtle">
+                    Status: <?= htmlspecialchars($filter_status) ?>
+                    <a href="<?= inv_qs(['status'=>'','page'=>1]) ?>" class="text-secondary ms-1 text-decoration-none">×</a>
+                </span>
+            <?php endif; ?>
+            <?php if ($filter_type): ?>
+                <span class="badge bg-info bg-opacity-10 text-info border border-info-subtle">
+                    Type: <?= htmlspecialchars($filter_type) ?>
+                    <a href="<?= inv_qs(['aircon_type'=>'','page'=>1]) ?>" class="text-info ms-1 text-decoration-none">×</a>
+                </span>
+            <?php endif; ?>
+            <?php if ($filter_supplier): ?>
+                <span class="badge bg-warning bg-opacity-10 text-warning border border-warning-subtle">
+                    Supplier: <?= htmlspecialchars($filter_supplier) ?>
+                    <a href="<?= inv_qs(['supplier'=>'','page'=>1]) ?>" class="text-warning ms-1 text-decoration-none">×</a>
+                </span>
+            <?php endif; ?>
+            <span class="small text-muted ms-1">— <?= $total_items ?> result<?= $total_items !== 1 ? 's' : '' ?></span>
+        </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<!-- ─── Table ────────────────────────────────────────────────── -->
 <div class="card shadow-sm border-0">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center py-2 px-4">
+        <span class="text-muted small">
+            Showing
+            <strong><?= count($items) > 0 ? ($page - 1) * $per_page + 1 : 0 ?>–<?= min($page * $per_page, $total_items) ?></strong>
+            of <strong><?= $total_items ?></strong> item<?= $total_items !== 1 ? 's' : '' ?>
+            <?php if ($total_items !== count($all_items)): ?>
+                <span class="text-muted">(<?= count($all_items) ?> total)</span>
+            <?php endif; ?>
+        </span>
+        <span class="text-muted small">Page <?= $page ?> of <?= $total_pages ?></span>
+    </div>
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
@@ -294,14 +447,24 @@ render_header('Inventory');
                         <th class="py-3">Franchise Price</th>
                         <th class="py-3">Subdealer Price</th>
                         <th class="py-3">Customer Price (Cash)</th>
-                        <th class="py-3">Customer Price (Bank/Credit Card)</th>
+                        <th class="py-3">Customer Price (Card)</th>
                         <th class="py-3">Created At</th>
                         <th class="px-3 py-3 text-end">Action</th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php if (empty($items)): ?>
-                    <tr><td colspan="12" class="text-center py-5 text-muted">No inventory items found.</td></tr>
+                    <tr>
+                        <td colspan="12" class="text-center py-5 text-muted">
+                            <?php if ($search || $filter_status || $filter_type || $filter_supplier): ?>
+                                <i data-lucide="search-x" style="width:32px;height:32px;" class="mb-2 d-block mx-auto opacity-25"></i>
+                                No items match your current filters.
+                                <a href="inventory.php" class="d-block mt-1 small">Clear filters</a>
+                            <?php else: ?>
+                                No inventory items found.
+                            <?php endif; ?>
+                        </td>
+                    </tr>
                 <?php else: ?>
                     <?php foreach ($items as $item): ?>
                     <tr>
@@ -316,6 +479,7 @@ render_header('Inventory');
                                     'Available' => 'success',
                                     'Installed' => 'secondary',
                                     'Reserved'  => 'warning',
+                                    'Defective' => 'danger',
                                     default     => 'light'
                                 };
                             ?>
@@ -345,6 +509,50 @@ render_header('Inventory');
             </table>
         </div>
     </div>
+
+    <!-- ─── Pagination ──────────────────────────────────────── -->
+    <?php if ($total_pages > 1): ?>
+    <div class="card-footer bg-white d-flex justify-content-between align-items-center py-3 px-4">
+        <span class="text-muted small">
+            <?= $total_items ?> item<?= $total_items !== 1 ? 's' : '' ?> &bull; <?= $per_page ?> per page
+        </span>
+        <nav>
+            <ul class="pagination pagination-sm mb-0">
+                <!-- First -->
+                <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
+                    <a class="page-link" href="<?= inv_qs(['page' => 1]) ?>" title="First">«</a>
+                </li>
+                <!-- Prev -->
+                <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
+                    <a class="page-link" href="<?= inv_qs(['page' => $page - 1]) ?>">‹</a>
+                </li>
+                <!-- Numbered pages (window of 5) -->
+                <?php
+                $window_start = max(1, $page - 2);
+                $window_end   = min($total_pages, $page + 2);
+                if ($window_start > 1): ?>
+                    <li class="page-item disabled"><span class="page-link">…</span></li>
+                <?php endif;
+                for ($p = $window_start; $p <= $window_end; $p++): ?>
+                <li class="page-item <?= $p === $page ? 'active' : '' ?>">
+                    <a class="page-link" href="<?= inv_qs(['page' => $p]) ?>"><?= $p ?></a>
+                </li>
+                <?php endfor;
+                if ($window_end < $total_pages): ?>
+                    <li class="page-item disabled"><span class="page-link">…</span></li>
+                <?php endif; ?>
+                <!-- Next -->
+                <li class="page-item <?= $page >= $total_pages ? 'disabled' : '' ?>">
+                    <a class="page-link" href="<?= inv_qs(['page' => $page + 1]) ?>">›</a>
+                </li>
+                <!-- Last -->
+                <li class="page-item <?= $page >= $total_pages ? 'disabled' : '' ?>">
+                    <a class="page-link" href="<?= inv_qs(['page' => $total_pages]) ?>" title="Last">»</a>
+                </li>
+            </ul>
+        </nav>
+    </div>
+    <?php endif; ?>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
@@ -449,7 +657,6 @@ render_header('Inventory');
 
       <div class="modal-body p-4">
 
-        <!-- Instructions -->
         <div class="alert alert-info py-3 mb-4">
           <h6 class="fw-bold mb-2"><i data-lucide="info" style="width:15px;" class="me-1"></i>Instructions</h6>
           <p class="small mb-2">Your CSV must include a header row. Required columns are marked <span class="text-danger fw-bold">*</span>. Column order doesn't matter — headers are matched by name.</p>
@@ -509,7 +716,6 @@ render_header('Inventory');
             </div>
           </div>
 
-          <!-- Preview panel -->
           <div id="csvPreviewWrap" style="display:none;">
             <label class="form-label fw-semibold">Preview (first 5 rows)</label>
             <div class="table-responsive border rounded" style="max-height:220px;overflow-y:auto;">
@@ -532,19 +738,17 @@ render_header('Inventory');
 </div>
 
 <script>
-/* ── Confirm Replace mode ───────────────────────── */
 function confirmReplace(radio) {
     if (!confirm('Replace mode will DELETE all existing inventory items and replace them with the CSV data.\n\nAre you sure?')) {
         document.getElementById('mode_append').checked = true;
     }
 }
 
-/* ── CSV client-side preview ────────────────────── */
 function previewCsv(input) {
-    const submitBtn  = document.getElementById('importSubmitBtn');
-    const previewWrap = document.getElementById('csvPreviewWrap');
+    const submitBtn    = document.getElementById('importSubmitBtn');
+    const previewWrap  = document.getElementById('csvPreviewWrap');
     const previewTable = document.getElementById('csvPreviewTable');
-    const rowCount   = document.getElementById('csvRowCount');
+    const rowCount     = document.getElementById('csvRowCount');
 
     submitBtn.disabled = true;
     previewWrap.style.display = 'none';
@@ -564,7 +768,6 @@ function previewCsv(input) {
             return;
         }
 
-        // Simple CSV parse (handles quoted fields)
         function parseCsvLine(line) {
             const result = [];
             let cur = '', inQ = false;
@@ -581,8 +784,6 @@ function previewCsv(input) {
         const headers   = parseCsvLine(lines[0]);
         const dataLines = lines.slice(1);
         const preview   = dataLines.slice(0, 5);
-
-        // Validate required headers
         const required  = ['aircon_type', 'brand_model'];
         const normHead  = headers.map(h => h.toLowerCase().trim());
         const missing   = required.filter(r => !normHead.includes(r));
@@ -590,7 +791,6 @@ function previewCsv(input) {
         let html = '<thead class="bg-light"><tr>';
         headers.forEach(h => { html += `<th class="px-2 py-1">${h}</th>`; });
         html += '</tr></thead><tbody>';
-
         preview.forEach(line => {
             const cols = parseCsvLine(line);
             html += '<tr>';

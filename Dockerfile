@@ -1,13 +1,26 @@
-FROM php:8.2-cli
+# Start from PHP 8.2 with Apache
+FROM php:8.2-apache
+
+# Install system tools for Composer
+RUN apt-get update && apt-get install -y zip unzip git curl
+
+# Enable Apache rewrite
+RUN a2enmod rewrite
+
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 # Set working directory
-WORKDIR /app
+WORKDIR /var/www/html
 
-# Copy files
+# Copy project files (without vendor)
 COPY . .
 
-# Expose Railway port
-EXPOSE 8080
+# Install PHP dependencies inside container
+RUN composer install --no-dev --optimize-autoloader
 
-# Start PHP built-in server
-CMD php -S 0.0.0.0:$PORT -t .
+# Fix permissions
+RUN chown -R www-data:www-data /var/www/html
+
+# Start Apache
+CMD ["apache2-foreground"]

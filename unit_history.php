@@ -156,63 +156,7 @@ require_once 'loading_screen.php';
 render_header('Unit History');
 ?>
 
-<style>
-/* ── Event Badges ──────────────────────────────────────────── */
-.event-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    padding: 3px 9px;
-    border-radius: 20px;
-    text-transform: uppercase;
-    white-space: nowrap;
-}
-.event-added         { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-.event-status_change { background: #fef9c3; color: #854d0e; border: 1px solid #fde047; }
-.event-price_edit    { background: #ede9fe; color: #6d28d9; border: 1px solid #c4b5fd; }
-.event-deleted       { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
-.event-note          { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
-
-/* Diff pills */
-.diff-old   { background: #fee2e2; color: #b91c1c; padding: 1px 7px; border-radius: 4px; font-size: 12px; text-decoration: line-through; }
-.diff-new   { background: #dcfce7; color: #15803d; padding: 1px 7px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-.diff-arrow { color: #94a3b8; font-size: 11px; margin: 0 3px; }
-
-/* Timeline dot */
-.timeline-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; margin-right: 6px; }
-.dot-added         { background: #16a34a; }
-.dot-status_change { background: #ca8a04; }
-.dot-price_edit    { background: #7c3aed; }
-.dot-deleted       { background: #dc2626; }
-.dot-note          { background: #0284c7; }
-
-/* Stat cards */
-.stat-hist { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 22px 14px; transition: box-shadow 0.2s; }
-.stat-hist:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.07); }
-.stat-hist .num  { font-size: 2rem; font-weight: 800; letter-spacing: -0.04em; line-height: 1; }
-.stat-hist .lbl  { font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
-
-/* Unit chip */
-.unit-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    font-weight: 600;
-    background: #f1f5f9;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    padding: 2px 8px;
-    color: #334155;
-    white-space: nowrap;
-    max-width: 190px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-</style>
+<link href="css/unit_history.css" rel="stylesheet">
 
 <!-- ── Page Header ─────────────────────────────────────────── -->
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">

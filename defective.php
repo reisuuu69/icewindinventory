@@ -55,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'mark'
         if (!$inventory_id || !$reason) {
             $error = 'Please select an item and provide a reason.';
         } else {
+            // Load the inventory item for denormalized info
             $inv   = read_json(INVENTORY_FILE);
             $found = null;
             foreach ($inv as $it) {
@@ -72,6 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'mark'
                 } unset($it);
                 write_json(INVENTORY_FILE, $inv);
 
+                // Record defective entry
                 record_defective([
                     'inventory_id' => $inventory_id,
                     'brand_model'  => $found['brand_model']  ?? '',
@@ -96,18 +98,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resol
     } else {
         $defective_id = intval($_POST['defective_id'] ?? 0);
         $resolution   = trim($_POST['resolution'] ?? '');
-        $allowed      = ['Pending', 'Under Repair', 'Repaired', 'Returned to Supplier'];
+        $allowed      = ['Pending', 'Under Repair', 'Repaired', 'Written Off', 'Returned to Supplier'];
 
         if (!in_array($resolution, $allowed)) {
             $error = 'Invalid resolution status.';
         } else {
-            $rows    = get_defectives();
+            $rows = get_defectives();
             $updated = false;
             foreach ($rows as &$row) {
                 if ((int)$row['id'] === $defective_id) {
                     $row['resolution'] = $resolution;
 
-                    // Repaired → restore inventory item to Available
+                    // If repaired, restore inventory status to Available
                     if ($resolution === 'Repaired') {
                         $inv = read_json(INVENTORY_FILE);
                         foreach ($inv as &$it) {
@@ -116,17 +118,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'resol
                                 break;
                             }
                         } unset($it);
-                        write_json(INVENTORY_FILE, $inv);
-                    }
-
-                    // Returned to Supplier → remove from inventory entirely
-                    // (record is kept in Defectives for history)
-                    if ($resolution === 'Returned to Supplier') {
-                        $inv = read_json(INVENTORY_FILE);
-                        $inv = array_values(array_filter(
-                            $inv,
-                            fn($it) => (int)$it['id'] !== (int)$row['inventory_id']
-                        ));
                         write_json(INVENTORY_FILE, $inv);
                     }
 
@@ -161,6 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_defective_id']
 $defectives = get_defectives();
 $inventory  = read_json(INVENTORY_FILE);
 
+// Available items for the "mark defective" dropdown
 $available_items = array_filter($inventory, fn($i) =>
     in_array($i['status'] ?? '', ['Available', 'Reserved', 'Installed'])
 );
@@ -182,14 +174,6 @@ if ($filter_search) {
 }
 
 $success = $success ?: ($_GET['success'] ?? '');
-
-// Resolution config — 4 statuses only
-$card_cfg = [
-    'Pending'              => ['danger',  'clock'],
-    'Under Repair'         => ['warning', 'tool'],
-    'Repaired'             => ['success', 'check-circle'],
-    'Returned to Supplier' => ['info',    'truck'],
-];
 
 require_once 'loading_screen.php';
 render_header('Defective Units');
@@ -216,15 +200,23 @@ render_header('Defective Units');
 
 <!-- Summary cards -->
 <?php
-$counts = ['Pending' => 0, 'Under Repair' => 0, 'Repaired' => 0, 'Returned to Supplier' => 0];
+$counts = ['Pending'=>0,'Under Repair'=>0,'Repaired'=>0,'Written Off'=>0,'Returned to Supplier'=>0];
 foreach ($defectives as $d) {
     $res = $d['resolution'] ?? 'Pending';
     if (isset($counts[$res])) $counts[$res]++;
 }
 ?>
 <div class="row g-3 mb-4">
-    <?php foreach ($card_cfg as $label => [$color, $icon]): ?>
-    <div class="col-6 col-md-3">
+    <?php
+    $card_cfg = [
+        'Pending'              => ['danger',  'clock'],
+        'Under Repair'         => ['warning', 'tool'],
+        'Repaired'             => ['success', 'check-circle'],
+        'Written Off'          => ['secondary','x-square'],
+        'Returned to Supplier' => ['info',    'truck'],
+    ];
+    foreach ($card_cfg as $label => [$color, $icon]): ?>
+    <div class="col-6 col-md-4 col-lg-2">
         <div class="card border-0 shadow-sm text-center py-3">
             <div class="text-<?= $color ?> mb-1"><i data-lucide="<?= $icon ?>" style="width:22px;height:22px;"></i></div>
             <div class="fw-bold fs-4 text-<?= $color ?>"><?= $counts[$label] ?></div>
@@ -283,13 +275,14 @@ foreach ($defectives as $d) {
                 <?php if (empty($display)): ?>
                     <tr><td colspan="10" class="text-center py-5 text-muted">No defective records found.</td></tr>
                 <?php else: foreach ($display as $d):
-                    $res   = $d['resolution'] ?? 'Pending';
+                    $res = $d['resolution'] ?? 'Pending';
                     $badge = match($res) {
                         'Pending'              => 'danger',
                         'Under Repair'         => 'warning',
                         'Repaired'             => 'success',
+                        'Written Off'          => 'secondary',
                         'Returned to Supplier' => 'info',
-                        default                => 'secondary',
+                        default                => 'light',
                     };
                 ?>
                     <tr>
@@ -388,15 +381,18 @@ foreach ($defectives as $d) {
                     <p class="text-muted small mb-3">Reason: <span id="resolve_reason"></span></p>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Resolution Status</label>
-                        <select name="resolution" id="resolve_resolution" class="form-select" required
-                                onchange="updateResolveHint(this.value)">
+                        <select name="resolution" id="resolve_resolution" class="form-select" required>
                             <option value="Pending">Pending</option>
                             <option value="Under Repair">Under Repair</option>
-                            <option value="Repaired">Repaired — restore to Available</option>
-                            <option value="Returned to Supplier">Returned to Supplier — remove from Inventory</option>
+                            <option value="Repaired">Repaired restore to Available</option>
+                            <option value="Written Off">Written Off</option>
+                            <option value="Returned to Supplier">Returned to Supplier</option>
                         </select>
                     </div>
-                    <div id="resolve_hint" class="alert py-2 small mb-0 alert-secondary" style="display:none;"></div>
+                    <div class="alert alert-info py-2 small mb-0">
+                        <i data-lucide="info" style="width:14px;" class="me-1"></i>
+                        Selecting <strong>Repaired</strong> will restore the unit's inventory status to <strong>Available</strong>.
+                    </div>
                 </div>
                 <div class="modal-footer border-0">
                     <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
@@ -408,41 +404,11 @@ foreach ($defectives as $d) {
 </div>
 
 <script>
-const HINTS = {
-    'Pending':                '',
-    'Under Repair':           '',
-    'Repaired':               'The unit\'s inventory status will be restored to <strong>Available</strong>.',
-    'Returned to Supplier':   'The unit will be <strong>permanently removed</strong> from Inventory. This defective record will be kept for reference.',
-};
-const HINT_CLASSES = {
-    'Repaired':             'alert-success',
-    'Returned to Supplier': 'alert-danger',
-};
-
-function updateResolveHint(val) {
-    const hint = document.getElementById('resolve_hint');
-    const msg  = HINTS[val] || '';
-    if (msg) {
-        hint.innerHTML = '<i data-lucide="info" style="width:14px;" class="me-1"></i> ' + msg;
-        hint.className = 'alert py-2 small mb-0 ' + (HINT_CLASSES[val] || 'alert-secondary');
-        hint.style.display = 'block';
-        lucide.createIcons();
-    } else {
-        hint.style.display = 'none';
-    }
-}
-
 function openResolveModal(d) {
-    document.getElementById('resolve_defective_id').value  = d.id;
+    document.getElementById('resolve_defective_id').value = d.id;
     document.getElementById('resolve_item_name').textContent = d.brand_model + ' ' + d.aircon_type;
-    document.getElementById('resolve_reason').textContent  = d.reason;
-
-    const sel = document.getElementById('resolve_resolution');
-    // Map any legacy "Written Off" → "Pending" as fallback
-    const validOptions = ['Pending', 'Under Repair', 'Repaired', 'Returned to Supplier'];
-    sel.value = validOptions.includes(d.resolution) ? d.resolution : 'Pending';
-
-    updateResolveHint(sel.value);
+    document.getElementById('resolve_reason').textContent = d.reason;
+    document.getElementById('resolve_resolution').value = d.resolution || 'Pending';
     new bootstrap.Modal(document.getElementById('resolveModal')).show();
 }
 </script>

@@ -167,23 +167,7 @@ require_once 'loading_screen.php';
 render_header('Reports');
 ?>
 
-<style>
-.report-section { margin-bottom: 2.5rem; }
-.report-section h2 { font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 1rem; }
-.stat-mini { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:16px 20px; }
-.stat-mini .num { font-size:1.75rem; font-weight:700; letter-spacing:-0.04em; line-height:1; }
-.stat-mini .lbl { font-size:0.75rem; color:#94a3b8; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; margin-top:4px; }
-.bar-row { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
-.bar-label { width:140px; font-size:0.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex-shrink:0; }
-.bar-track { flex:1; height:8px; background:#f1f5f9; border-radius:4px; overflow:hidden; }
-.bar-fill  { height:100%; border-radius:4px; }
-.bar-val   { width:36px; text-align:right; font-size:0.8rem; font-weight:600; color:#475569; flex-shrink:0; }
-@media print {
-    .sidebar, .navbar, .btn-toolbar, nav.col-md-3 { display:none !important; }
-    main.col-md-9 { max-width:100%; flex:0 0 100%; }
-    .no-print { display:none !important; }
-}
-</style>
+<link href="css/reports.css" rel="stylesheet">
 
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
     <div>

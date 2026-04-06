@@ -156,60 +156,16 @@ function render_header($title = 'Icewind HVAC') {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title><?php echo htmlspecialchars($title); ?> - Icewind HVAC</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link href="css/app.css" rel="stylesheet">
+        <link href="css/loading_screen.css" rel="stylesheet">
         <script src="https://unpkg.com/lucide@latest"></script>
-        <style>
-            :root {
-                --hvac-blue:       #0056b3;
-                --hvac-blue-dark:  #003f88;
-                --hvac-light-blue: #e7f1ff;
-            }
-            body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-            .navbar { background-color: var(--hvac-blue); }
-
-            /* ── Sidebar ── */
-            .sidebar {
-                min-height: calc(100vh - 56px);
-                background-color: #ffffff;
-                border-right: 1px solid #dee2e6;
-            }
-            .sidebar .nav-link {
-                color: #333;
-                padding: 0.65rem 1rem;
-                border-radius: 8px;
-                margin: 2px 8px;
-                display: flex;
-                align-items: center;
-                font-size: 0.875rem;
-                font-weight: 500;
-                transition: all 0.2s;
-            }
-            .sidebar .nav-link:hover { background-color: var(--hvac-light-blue); color: var(--hvac-blue); }
-            .sidebar .nav-link.active {
-                background: linear-gradient(90deg, var(--hvac-blue), var(--hvac-blue-dark));
-                color: #fff;
-            }
-            .sidebar .nav-section-label {
-                font-size: 0.68rem;
-                font-weight: 700;
-                text-transform: uppercase;
-                letter-spacing: 0.08em;
-                color: #94a3b8;
-                padding: 0.75rem 1rem 0.25rem;
-            }
-
-            /* ── Misc ── */
-            .card-stat { border-left: 4px solid var(--hvac-blue); }
-            .btn-primary { background-color: var(--hvac-blue); border-color: var(--hvac-blue); }
-            .btn-primary:hover { background-color: var(--hvac-blue-dark); border-color: var(--hvac-blue-dark); }
-            .table-hover tbody tr:hover { background-color: #f1f8ff; }
-        </style>
     </head>
-    <body>
+    <body class="iw-theme">
     <?php if (isset($_SESSION['user'])): ?>
-    <nav class="navbar navbar-expand-lg navbar-dark sticky-top shadow-sm">
+    <nav class="navbar navbar-expand-lg navbar-dark sticky-top iw-navbar shadow-sm">
         <div class="container-fluid">
-            <a class="navbar-brand fw-bold" href="dashboard.php">
-                <i data-lucide="wind" class="me-2"></i>Icewind HVAC
+            <a class="navbar-brand iw-brand" href="dashboard.php">
+                <img src="logo.gif" alt="IceWind" class="iw-brand__logo" decoding="async">
             </a>
             <div class="ms-auto d-flex align-items-center">
                 <span class="text-white me-3 d-none d-md-inline">

@@ -1,20 +1,13 @@
-FROM php:8.2-apache
+FROM php:8.2-cli
 
-# Remove all enabled MPM configs first
-RUN rm -f /etc/apache2/mods-enabled/mpm_*.load
-RUN rm -f /etc/apache2/mods-enabled/mpm_*.conf
-
-# Enable ONLY prefork (needed for PHP)
-RUN a2enmod mpm_prefork
-
-# Enable rewrite
-RUN a2enmod rewrite
+# Set working directory
+WORKDIR /app
 
 # Copy files
-COPY . /var/www/html/
+COPY . .
 
-# Set permissions
-RUN chown -R www-data:www-data /var/www/html
+# Expose Railway port
+EXPOSE 8080
 
-# Start Apache
-CMD ["apache2-foreground"]
+# Start PHP built-in server
+CMD php -S 0.0.0.0:$PORT -t .

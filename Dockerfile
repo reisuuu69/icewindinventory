@@ -1,13 +1,17 @@
 FROM php:8.2-apache
 
-# Copy files
-COPY . /var/www/html/
+# Disable conflicting MPMs and enable prefork (required for PHP)
+RUN a2dismod mpm_event mpm_worker || true
+RUN a2enmod mpm_prefork
 
-# Enable Apache rewrite
+# Enable rewrite
 RUN a2enmod rewrite
+
+# Copy project files
+COPY . /var/www/html/
 
 # Fix permissions
 RUN chown -R www-data:www-data /var/www/html
 
-# Expose port (IMPORTANT for Railway)
-EXPOSE 80
+# Start Apache
+CMD ["apache2-foreground"]

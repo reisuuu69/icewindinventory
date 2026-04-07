@@ -18,4 +18,5 @@ COPY . .
 RUN composer install --no-dev --optimize-autoloader
 RUN chown -R www-data:www-data /var/www/html
 
+CMD ["bash", "-c", "ls /etc/apache2/mods-enabled/ | grep mpm && apache2-foreground"]
 CMD ["apache2-foreground"]

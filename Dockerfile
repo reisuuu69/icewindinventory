@@ -17,7 +17,7 @@ COPY . .
 
 RUN composer install --no-dev --optimize-autoloader
 RUN chown -R www-data:www-data /var/www/html
-
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 # Debug: show MPM state at end of build
 RUN ls /etc/apache2/mods-enabled/ | grep mpm
 

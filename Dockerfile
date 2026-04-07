@@ -1,15 +1,13 @@
 FROM php:8.2-apache
 
-# Install system tools FIRST
 RUN apt-get update && apt-get install -y zip unzip git curl
 
-# Fix MPM AFTER apt (apt may re-enable event/worker)
-RUN cd /etc/apache2/mods-enabled && \
-    rm -f mpm_event.load mpm_event.conf \
-          mpm_worker.load mpm_worker.conf \
-          mpm_prefork.load mpm_prefork.conf && \
-    ln -s ../mods-available/mpm_prefork.load mpm_prefork.load && \
-    ln -s ../mods-available/mpm_prefork.conf mpm_prefork.conf
+# Directly write the MPM conf instead of relying on symlinks
+RUN find /etc/apache2 -name "mpm_*.load" -o -name "mpm_*.conf" | xargs rm -f && \
+    echo "LoadModule mpm_prefork_module /usr/lib/apache2/modules/mod_mpm_prefork.so" \
+    > /etc/apache2/mods-enabled/mpm_prefork.load && \
+    cp /etc/apache2/mods-available/mpm_prefork.conf \
+       /etc/apache2/mods-enabled/mpm_prefork.conf
 
 RUN a2enmod rewrite
 

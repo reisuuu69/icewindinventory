@@ -20,5 +20,6 @@ COPY . .
 
 RUN composer install --no-dev --optimize-autoloader
 RUN chown -R www-data:www-data /var/www/html
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
 CMD ["apache2-foreground"]
